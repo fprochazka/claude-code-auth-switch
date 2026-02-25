@@ -1,5 +1,7 @@
 # claude-code-auth-switch
 
+> **Note:** This has only been tested on Linux. macOS and Windows may not work as expected — macOS in particular has a [Keychain collision bug](https://github.com/anthropics/claude-code/issues/20553) that breaks multi-account OAuth isolation.
+
 Run multiple [Claude Code](https://docs.anthropic.com/en/docs/claude-code) accounts side-by-side with isolated credentials, shared configuration, and zero Docker overhead.
 
 Each profile gets its own `claude-<name>` command on your `$PATH`:

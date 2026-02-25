@@ -95,6 +95,7 @@ def generate_wrapper_script(
     description: str,
     env_vars: dict[str, str],
     add_dirs: list[str],
+    model: str | None = None,
 ) -> str:
     lines = [
         "#!/usr/bin/env bash",
@@ -102,10 +103,31 @@ def generate_wrapper_script(
         f"# Profile: {profile_name} — {description}",
         "set -euo pipefail",
         "",
+    ]
+
+    # When a default model is configured, check if the user already passed --model
+    # on the command line — user's --model always takes precedence.
+    if model:
+        lines.extend([
+            f'# Default model (overridden if --model is passed on command line)',
+            'user_args=("$@")',
+            'has_model=false',
+            'for arg in "$@"; do',
+            '  case "$arg" in',
+            '    --model|--model=*) has_model=true; break ;;',
+            '  esac',
+            'done',
+            f'if [[ "$has_model" == false ]]; then',
+            f'  user_args+=(--model "{model}")',
+            'fi',
+            '',
+        ])
+
+    lines.extend([
         "# Build env -i command to start with a clean environment.",
         "# This is required for nesting (running from within another Claude Code session),",
         "# because inherited env vars suppress output rendering.",
-    ]
+    ])
 
     # Collect all env vars for the env -i invocation
     env_pairs = [
@@ -127,7 +149,7 @@ def generate_wrapper_script(
     for d in add_dirs:
         expanded = expand_path(d)
         cmd_parts.append(f'--add-dir "{expanded}"')
-    cmd_parts.append('"$@"')
+    cmd_parts.append('"${user_args[@]}"' if model else '"$@"')
 
     lines.append(" \\\n  ".join(cmd_parts))
     return "\n".join(lines) + "\n"
@@ -206,6 +228,7 @@ def main() -> None:
         description = profile_config.get("description", "")
         env_vars = profile_config.get("env", {}) or {}
         add_dirs = profile_config.get("add_dirs", []) or []
+        model = profile_config.get("model") or None
 
         profile_dir = profiles_base / profile_name
         script_name = f"claude-{profile_name}"
@@ -219,7 +242,7 @@ def main() -> None:
 
         # Generate and install wrapper script
         content = generate_wrapper_script(
-            profile_name, profile_dir, description, env_vars, add_dirs,
+            profile_name, profile_dir, description, env_vars, add_dirs, model,
         )
         install_wrapper_script(script_path, content)
 

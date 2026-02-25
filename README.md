@@ -77,6 +77,7 @@ The install script creates a profile directory per account under `~/.claude-prof
 
      work-team:
        description: "Company team subscription"
+       model: sonnet
        add_dirs:
          - ~/devel/projects/company
 
@@ -152,6 +153,7 @@ This replaces manual aliases like `alias claude-work='claude --add-dir ~/devel/p
 | `source_dir` | `~/.claude` | Directory to copy/symlink shared config from |
 | `bin_dir` | `~/.local/bin` | Where to install wrapper scripts |
 | `profiles.<name>.description` | `""` | Human-readable profile description |
+| `profiles.<name>.model` | | Default model to use (e.g., `sonnet`, `opus`). Overridden by `--model` on the command line. |
 | `profiles.<name>.env` | `{}` | Environment variables to set before launching Claude |
 | `profiles.<name>.add_dirs` | `[]` | Additional directories to pass via `--add-dir` |
 

@@ -17,6 +17,7 @@ profiles:
 
   work-team:
     description: "Company team subscription"
+    model: sonnet
     add_dirs:
       - ~/devel/projects/company
 

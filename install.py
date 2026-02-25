@@ -101,19 +101,35 @@ def generate_wrapper_script(
         MARKER,
         f"# Profile: {profile_name} — {description}",
         "set -euo pipefail",
-        f'export CLAUDE_CONFIG_DIR="{profile_dir}"',
+        "",
+        "# Build env -i command to start with a clean environment.",
+        "# This is required for nesting (running from within another Claude Code session),",
+        "# because inherited env vars suppress output rendering.",
+    ]
+
+    # Collect all env vars for the env -i invocation
+    env_pairs = [
+        'HOME="$HOME"',
+        'PATH="$PATH"',
+        'TERM="${TERM:-dumb}"',
+        'SHELL="$SHELL"',
+        'USER="$USER"',
+        'LANG="${LANG:-en_US.UTF-8}"',
+        f'CLAUDE_CONFIG_DIR="{profile_dir}"',
     ]
 
     for key, value in sorted(env_vars.items()):
-        lines.append(f'export {key}="{value}"')
+        env_pairs.append(f'{key}="{value}"')
 
-    cmd_parts = ["exec claude"]
+    cmd_parts = ["exec env -i"]
+    cmd_parts.extend(env_pairs)
+    cmd_parts.append("claude")
     for d in add_dirs:
         expanded = expand_path(d)
         cmd_parts.append(f'--add-dir "{expanded}"')
     cmd_parts.append('"$@"')
 
-    lines.append(" ".join(cmd_parts))
+    lines.append(" \\\n  ".join(cmd_parts))
     return "\n".join(lines) + "\n"
 
 

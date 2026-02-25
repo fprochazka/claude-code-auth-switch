@@ -124,28 +124,21 @@ def generate_wrapper_script(
         ])
 
     lines.extend([
-        "# Build env -i command to start with a clean environment.",
-        "# This is required for nesting (running from within another Claude Code session),",
-        "# because inherited env vars suppress output rendering.",
+        "# Unset inherited CLAUDE_*/ANTHROPIC_* env vars to avoid interference",
+        "# when nesting (running from within another Claude Code session).",
+        'while IFS= read -r varname; do',
+        '  unset "$varname"',
+        'done < <(compgen -v | grep -E "^(CLAUDE_|ANTHROPIC_)")',
+        "",
+        f'export CLAUDE_CONFIG_DIR="{profile_dir}"',
     ])
 
-    # Collect all env vars for the env -i invocation
-    env_pairs = [
-        'HOME="$HOME"',
-        'PATH="$PATH"',
-        'TERM="${TERM:-dumb}"',
-        'SHELL="$SHELL"',
-        'USER="$USER"',
-        'LANG="${LANG:-en_US.UTF-8}"',
-        f'CLAUDE_CONFIG_DIR="{profile_dir}"',
-    ]
-
     for key, value in sorted(env_vars.items()):
-        env_pairs.append(f'{key}="{value}"')
+        lines.append(f'export {key}="{value}"')
 
-    cmd_parts = ["exec env -i"]
-    cmd_parts.extend(env_pairs)
-    cmd_parts.append("claude")
+    lines.append("")
+
+    cmd_parts = ["exec claude"]
     for d in add_dirs:
         expanded = expand_path(d)
         cmd_parts.append(f'--add-dir "{expanded}"')

@@ -1,0 +1,30 @@
+# Claude Code Multi-Account Profile Configuration
+# Copy to ~/.claude-profiles/config.yaml and edit
+#
+# Profile names are used to derive:
+#   - Config dir: ~/.claude-profiles/<name>/
+#   - Wrapper script: <bin_dir>/claude-<name>
+
+# Source directory for shared configuration (default: ~/.claude)
+source_dir: ~/.claude
+
+# Install wrapper scripts here (default: ~/.local/bin)
+bin_dir: ~/.local/bin
+
+profiles:
+  personal:
+    description: "Personal Anthropic account"
+
+  work-team:
+    description: "Company team subscription"
+    add_dirs:
+      - ~/devel/projects/company
+
+  work-vertexgcp:
+    description: "Company via Google Cloud Vertex AI"
+    add_dirs:
+      - ~/devel/projects/company
+    env:
+      CLAUDE_CODE_USE_VERTEX: "1"
+      ANTHROPIC_VERTEX_PROJECT_ID: "<your-project-id>"
+      CLOUD_ML_REGION: "europe-west1"

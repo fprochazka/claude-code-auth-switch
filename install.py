@@ -131,6 +131,7 @@ def generate_wrapper_script(
         'done < <(compgen -v | grep -E "^(CLAUDE_|ANTHROPIC_)")',
         "",
         f'export CLAUDE_CONFIG_DIR="{profile_dir}"',
+        f'export FP_CC_AUTH_SWITCH_PROFILE="{profile_name}"',
     ])
 
     for key, value in sorted(env_vars.items()):

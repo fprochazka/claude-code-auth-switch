@@ -198,6 +198,24 @@ Authentication uses [Google Cloud Application Default Credentials](https://cloud
 gcloud auth application-default login
 ```
 
+## Environment variables
+
+Each wrapper script exports the following environment variables before launching `claude`:
+
+| Variable | Example | Description |
+|----------|---------|-------------|
+| `CLAUDE_CONFIG_DIR` | `~/.claude-profiles/personal` | Points Claude Code at the profile's isolated config directory |
+| `FP_CC_AUTH_SWITCH_PROFILE` | `personal` | The active profile name — useful in [status line scripts](https://docs.anthropic.com/en/docs/claude-code/settings#status-bar) and hooks |
+
+The `FP_CC_AUTH_SWITCH_PROFILE` variable is intentionally outside the `CLAUDE_*`/`ANTHROPIC_*` namespace so it is not cleared by the wrapper's env-unset logic when nesting sessions. You can use it in your `statusLine` command to display which profile is active:
+
+```bash
+# In your status line script:
+if [ -n "${FP_CC_AUTH_SWITCH_PROFILE:-}" ]; then
+    echo "Profile: $FP_CC_AUTH_SWITCH_PROFILE"
+fi
+```
+
 ## Limitations
 
 - **Linux only.** macOS has a [Keychain collision bug](https://github.com/anthropics/claude-code/issues/20553) where multiple OAuth profiles overwrite each other's credentials regardless of `CLAUDE_CONFIG_DIR`.

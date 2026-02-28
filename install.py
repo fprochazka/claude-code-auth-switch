@@ -8,6 +8,7 @@ with shared configuration, then installs wrapper scripts to bin_dir.
 
 import argparse
 import os
+import difflib
 import shutil
 import stat
 import sys
@@ -181,6 +182,43 @@ def cleanup_stale_scripts(bin_dir: Path, active_script_names: set[str]) -> None:
             print(f"  removed stale script {entry}")
 
 
+def collect_diverged_files(
+    config: dict,
+    profiles_base: Path,
+    source_dir: Path,
+) -> list[tuple[str, str, str]]:
+    """Check all profile copy files for divergence from source.
+
+    Returns list of (profile_name, filename, diff_text) for files where
+    the profile copy contains content not present in the source.
+    """
+    diverged = []
+    for profile_name in config["profiles"]:
+        profile_dir = profiles_base / profile_name
+        for filename in COPY_FILES:
+            src = source_dir / filename
+            dst = profile_dir / filename
+            if not src.exists() or not dst.exists():
+                continue
+            src_lines = src.read_text().splitlines(keepends=True)
+            dst_lines = dst.read_text().splitlines(keepends=True)
+            diff = list(difflib.unified_diff(
+                src_lines, dst_lines,
+                fromfile=str(src),
+                tofile=str(dst),
+            ))
+            if not diff:
+                continue
+            # Check if profile has any additions (content not in source)
+            has_additions = any(
+                line.startswith('+') and not line.startswith('+++')
+                for line in diff
+            )
+            if has_additions:
+                diverged.append((profile_name, filename, ''.join(diff)))
+    return diverged
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Install Claude Code multi-account profile wrapper scripts",
@@ -195,6 +233,11 @@ def main() -> None:
         "--sync",
         action="store_true",
         help="Force re-copy of mutable files (overwrite existing copies in profile dirs)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force overwrite of diverged profile files (use with --sync)",
     )
     args = parser.parse_args()
 
@@ -214,6 +257,21 @@ def main() -> None:
     if not source_dir.exists():
         print(f"Error: Source directory not found: {source_dir}", file=sys.stderr)
         sys.exit(1)
+
+    # When --sync is used without --force, check for diverged files first
+    if args.sync and not args.force:
+        diverged = collect_diverged_files(config, profiles_base, source_dir)
+        if diverged:
+            print("\nDiverged profile files detected:\n")
+            for profile_name, filename, diff_text in diverged:
+                print(f"  Profile '{profile_name}' — {filename}:")
+                for line in diff_text.splitlines():
+                    print(f"    {line}")
+                print()
+            print("The profile file(s) above contain changes not present in the source.")
+            print("You probably want to merge these changes back to the source file first.")
+            print("\nTo overwrite anyway, use: python3 install.py --sync --force")
+            sys.exit(0)
 
     active_script_names: set[str] = set()
 

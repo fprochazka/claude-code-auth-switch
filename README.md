@@ -162,7 +162,8 @@ This replaces manual aliases like `alias claude-work='claude --add-dir ~/devel/p
 | Flag | Description |
 |------|-------------|
 | `--config PATH` | Config file path (default: `~/.claude-profiles/config.yaml`) |
-| `--sync` | Force re-copy of mutable files, overwriting existing copies in profile dirs |
+| `--sync` | Re-copy mutable files from source. If a profile file has diverged (contains changes not in source), shows a diff and exits — prompting you to merge first |
+| `--sync --force` | Force overwrite of diverged profile files without prompting |
 
 ### Shared file handling
 
@@ -179,12 +180,17 @@ This replaces manual aliases like `alias claude-work='claude --add-dir ~/devel/p
 python3 install.py
 
 # Changed ~/.claude/settings.json and want profiles to pick it up
+# (will show a diff and stop if any profile file has diverged)
 python3 install.py --sync
+
+# Force overwrite even if profile files have diverged
+python3 install.py --sync --force
 ```
 
 The install script is idempotent:
 - Existing profile directories are never deleted
 - Existing copied files are not overwritten (unless `--sync`)
+- `--sync` detects diverged files (profile has changes not in source) and shows a diff before overwriting
 - Symlinks are updated if their target changed
 - Stale wrapper scripts (from removed profiles) are automatically cleaned up
 

@@ -171,12 +171,14 @@ This replaces manual aliases like `alias claude-work='claude --add-dir ~/devel/p
 |------|-------|----------|
 | **Copied** | `settings.json`, `settings.local.json`, `CLAUDE.md` | Copied on first install. Use `--sync` to refresh from source. |
 | **Symlinked** | `commands/`, `skills/`, `agents/`, `plugins/`, `projects/` | Always symlinked. Changes are shared across all profiles. |
+| **Selectively synced** | `.claude.json` (`mcpServers`) | Only the `mcpServers` key is synced from `~/.claude.json` on every install. Other keys in `.claude.json` are per-profile state. |
 | **Per-profile** | `.credentials.json`, `.claude.json`, `teams/`, `history.jsonl` | Created automatically by Claude Code on first use. |
 
 ## Re-syncing after config changes
 
 ```bash
 # Add/remove profiles, update env vars → re-run install
+# (also syncs mcpServers from ~/.claude.json into each profile)
 python3 install.py
 
 # Changed ~/.claude/settings.json and want profiles to pick it up
@@ -192,6 +194,7 @@ The install script is idempotent:
 - Existing copied files are not overwritten (unless `--sync`)
 - `--sync` detects diverged files (profile has changes not in source) and shows a diff before overwriting
 - Symlinks are updated if their target changed
+- `mcpServers` from `~/.claude.json` are synced into each profile on every run (not just `--sync`)
 - Stale wrapper scripts (from removed profiles) are automatically cleaned up
 
 ## Vertex AI notes

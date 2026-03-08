@@ -7,6 +7,7 @@ with shared configuration, then installs wrapper scripts to bin_dir.
 """
 
 import argparse
+import json
 import os
 import difflib
 import shutil
@@ -88,6 +89,57 @@ def setup_profile_dir(
             continue
         dst.symlink_to(src)
         print(f"  symlinked {dirname}/ -> {src}")
+
+
+def sync_mcp_servers(
+    profile_name: str,
+    profile_dir: Path,
+    source_claude_json_path: Path,
+) -> None:
+    """Sync mcpServers from the global ~/.claude.json into a profile's .claude.json.
+
+    Only the mcpServers key is synced — all other keys in the profile's
+    .claude.json are preserved untouched.
+    """
+    if not source_claude_json_path.exists():
+        return
+
+    try:
+        source_data = json.loads(source_claude_json_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
+
+    source_servers = source_data.get("mcpServers")
+    if source_servers is None:
+        return
+
+    profile_claude_json = profile_dir / ".claude.json"
+    if not profile_claude_json.exists():
+        return
+
+    try:
+        profile_data = json.loads(profile_claude_json.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
+
+    existing_servers = profile_data.get("mcpServers")
+
+    # Check if already in sync
+    if existing_servers == source_servers:
+        return
+
+    # Warn about profile-only servers being overwritten
+    if existing_servers and isinstance(existing_servers, dict):
+        source_names = set(source_servers.keys()) if isinstance(source_servers, dict) else set()
+        profile_only = set(existing_servers.keys()) - source_names
+        if profile_only:
+            print(f"  note: overwriting profile-only mcpServers: {', '.join(sorted(profile_only))}")
+
+    profile_data["mcpServers"] = source_servers
+    profile_claude_json.write_text(json.dumps(profile_data, indent=2) + "\n")
+
+    server_count = len(source_servers) if isinstance(source_servers, dict) else 0
+    print(f"  synced mcpServers ({server_count} server{'s' if server_count != 1 else ''})")
 
 
 def generate_wrapper_script(
@@ -273,6 +325,7 @@ def main() -> None:
             print("\nTo overwrite anyway, use: python3 install.py --sync --force")
             sys.exit(0)
 
+    source_claude_json_path = Path.home() / ".claude.json"
     active_script_names: set[str] = set()
 
     for profile_name, profile_config in config["profiles"].items():
@@ -291,6 +344,9 @@ def main() -> None:
 
         # Setup profile directory with copies and symlinks
         setup_profile_dir(profile_name, profile_dir, source_dir, args.sync)
+
+        # Sync mcpServers from global ~/.claude.json
+        sync_mcp_servers(profile_name, profile_dir, source_claude_json_path)
 
         # Generate and install wrapper script
         content = generate_wrapper_script(

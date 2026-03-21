@@ -80,6 +80,9 @@ The install script creates a profile directory per account under `~/.claude-prof
        model: sonnet
        add_dirs:
          - ~/devel/projects/company
+       attribution:
+         commit: "🤖 Generated with Claude Code\n\nCo-Authored-By: Claude <noreply@anthropic.com>"
+         pr: "🤖 Generated with [Claude Code](https://claude.ai/code)"
 
      work-vertex:
        description: "Company via Google Cloud Vertex AI"
@@ -156,6 +159,9 @@ This replaces manual aliases like `alias claude-work='claude --add-dir ~/devel/p
 | `profiles.<name>.model` | | Default model to use (e.g., `sonnet`, `opus`). Overridden by `--model` on the command line. |
 | `profiles.<name>.env` | `{}` | Environment variables to set before launching Claude |
 | `profiles.<name>.add_dirs` | `[]` | Additional directories to pass via `--add-dir` |
+| `profiles.<name>.attribution` | | Attribution settings object patched into the profile's `settings.json` on every install |
+| `profiles.<name>.attribution.commit` | | Attribution text appended to git commit messages |
+| `profiles.<name>.attribution.pr` | | Attribution text appended to pull request descriptions |
 
 ### `install.py`
 
@@ -171,6 +177,7 @@ This replaces manual aliases like `alias claude-work='claude --add-dir ~/devel/p
 |------|-------|----------|
 | **Copied** | `settings.json`, `settings.local.json`, `CLAUDE.md` | Copied on first install. Use `--sync` to refresh from source. |
 | **Symlinked** | `commands/`, `skills/`, `agents/`, `plugins/`, `projects/` | Always symlinked. Changes are shared across all profiles. |
+| **Patched** | `settings.json` (`attribution`) | Set from profile config on every install. |
 | **Selectively synced** | `.claude.json` (`mcpServers`) | Only the `mcpServers` key is synced from `~/.claude.json` on every install. Other keys in `.claude.json` are per-profile state. |
 | **Per-profile** | `.credentials.json`, `.claude.json`, `teams/`, `history.jsonl` | Created automatically by Claude Code on first use. |
 

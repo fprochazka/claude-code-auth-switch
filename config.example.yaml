@@ -20,6 +20,9 @@ profiles:
     model: sonnet
     add_dirs:
       - ~/devel/projects/company
+    attribution:
+      commit: "🤖 Generated with Claude Code\n\nCo-Authored-By: Claude <noreply@anthropic.com>"
+      pr: "🤖 Generated with [Claude Code](https://claude.ai/code)"
 
   work-vertexgcp:
     description: "Company via Google Cloud Vertex AI"

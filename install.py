@@ -142,6 +142,33 @@ def sync_mcp_servers(
     print(f"  synced mcpServers ({server_count} server{'s' if server_count != 1 else ''})")
 
 
+def patch_settings_json(
+    profile_name: str,
+    profile_dir: Path,
+    profile_config: dict,
+) -> None:
+    """Patch attribution settings into a profile's settings.json."""
+    attribution = profile_config.get("attribution")
+    if attribution is None:
+        return
+
+    settings_path = profile_dir / "settings.json"
+    if not settings_path.exists():
+        return
+
+    try:
+        data = json.loads(settings_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
+
+    if data.get("attribution") == attribution:
+        return
+
+    data["attribution"] = attribution
+    settings_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    print(f"  patched attribution in settings.json")
+
+
 def generate_wrapper_script(
     profile_name: str,
     profile_dir: Path,
@@ -234,6 +261,27 @@ def cleanup_stale_scripts(bin_dir: Path, active_script_names: set[str]) -> None:
             print(f"  removed stale script {entry}")
 
 
+def build_expected_settings(source_path: Path, profile_config: dict) -> str | None:
+    """Build what a profile's settings.json should look like after patching.
+
+    Applies config-driven patches (like attribution) to the source content,
+    so that divergence detection only flags truly unexpected changes.
+    """
+    if not source_path.exists():
+        return None
+
+    try:
+        data = json.loads(source_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    attribution = profile_config.get("attribution")
+    if attribution is not None:
+        data["attribution"] = attribution
+
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+
 def collect_diverged_files(
     config: dict,
     profiles_base: Path,
@@ -243,16 +291,27 @@ def collect_diverged_files(
 
     Returns list of (profile_name, filename, diff_text) for files where
     the profile copy contains content not present in the source.
+    For settings.json, the expected content includes config-driven patches
+    (e.g. attribution), so those don't count as divergence.
     """
     diverged = []
-    for profile_name in config["profiles"]:
+    for profile_name, profile_config in config["profiles"].items():
+        profile_config = profile_config or {}
         profile_dir = profiles_base / profile_name
         for filename in COPY_FILES:
             src = source_dir / filename
             dst = profile_dir / filename
             if not src.exists() or not dst.exists():
                 continue
-            src_lines = src.read_text().splitlines(keepends=True)
+
+            if filename == "settings.json":
+                expected = build_expected_settings(src, profile_config)
+                if expected is None:
+                    continue
+                src_lines = expected.splitlines(keepends=True)
+            else:
+                src_lines = src.read_text().splitlines(keepends=True)
+
             dst_lines = dst.read_text().splitlines(keepends=True)
             diff = list(difflib.unified_diff(
                 src_lines, dst_lines,
@@ -344,6 +403,9 @@ def main() -> None:
 
         # Setup profile directory with copies and symlinks
         setup_profile_dir(profile_name, profile_dir, source_dir, args.sync)
+
+        # Patch attribution settings into profile's settings.json
+        patch_settings_json(profile_name, profile_dir, profile_config)
 
         # Sync mcpServers from global ~/.claude.json
         sync_mcp_servers(profile_name, profile_dir, source_claude_json_path)

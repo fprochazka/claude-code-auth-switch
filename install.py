@@ -183,7 +183,30 @@ def generate_wrapper_script(
         f"# Profile: {profile_name} — {description}",
         "set -euo pipefail",
         "",
+        "# Unset inherited CLAUDE_*/ANTHROPIC_* env vars to avoid interference",
+        "# when nesting (running from within another Claude Code session).",
+        'while IFS= read -r varname; do',
+        '  unset "$varname"',
+        'done < <(compgen -v | grep -E "^(CLAUDE_|ANTHROPIC_)")',
+        "",
+        f'export CLAUDE_CONFIG_DIR="{profile_dir}"',
+        f'export FP_CC_AUTH_SWITCH_PROFILE="{profile_name}"',
     ]
+
+    for key, value in sorted(env_vars.items()):
+        lines.append(f'export {key}="{value}"')
+
+    lines.append("")
+
+    # Subcommands (mcp, auth, etc.) don't accept --add-dir or --model,
+    # so pass through args directly when a subcommand is detected.
+    subcommands = "mcp|auth|doctor|install|setup-token|update|upgrade|agents|auto-mode|plugin|plugins"
+    lines.extend([
+        f'case "${{1:-}}" in',
+        f'  {subcommands}) exec claude "$@" ;;',
+        'esac',
+        '',
+    ])
 
     # When a default model is configured, check if the user already passed --model
     # on the command line — user's --model always takes precedence.
@@ -202,22 +225,6 @@ def generate_wrapper_script(
             'fi',
             '',
         ])
-
-    lines.extend([
-        "# Unset inherited CLAUDE_*/ANTHROPIC_* env vars to avoid interference",
-        "# when nesting (running from within another Claude Code session).",
-        'while IFS= read -r varname; do',
-        '  unset "$varname"',
-        'done < <(compgen -v | grep -E "^(CLAUDE_|ANTHROPIC_)")',
-        "",
-        f'export CLAUDE_CONFIG_DIR="{profile_dir}"',
-        f'export FP_CC_AUTH_SWITCH_PROFILE="{profile_name}"',
-    ])
-
-    for key, value in sorted(env_vars.items()):
-        lines.append(f'export {key}="{value}"')
-
-    lines.append("")
 
     cmd_parts = ["exec claude"]
     for d in add_dirs:

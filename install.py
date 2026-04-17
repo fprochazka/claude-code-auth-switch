@@ -147,9 +147,14 @@ def patch_settings_json(
     profile_dir: Path,
     profile_config: dict,
 ) -> None:
-    """Patch attribution settings into a profile's settings.json."""
-    attribution = profile_config.get("attribution")
-    if attribution is None:
+    """Patch per-profile settings (attribution, plansDirectory) into settings.json."""
+    patches: dict[str, object] = {}
+    if (attribution := profile_config.get("attribution")) is not None:
+        patches["attribution"] = attribution
+    if (plans_directory := profile_config.get("plansDirectory")) is not None:
+        patches["plansDirectory"] = plans_directory
+
+    if not patches:
         return
 
     settings_path = profile_dir / "settings.json"
@@ -161,12 +166,13 @@ def patch_settings_json(
     except (json.JSONDecodeError, OSError):
         return
 
-    if data.get("attribution") == attribution:
+    changed = [key for key, value in patches.items() if data.get(key) != value]
+    if not changed:
         return
 
-    data["attribution"] = attribution
+    data.update(patches)
     settings_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-    print(f"  patched attribution in settings.json")
+    print(f"  patched {', '.join(changed)} in settings.json")
 
 
 def generate_wrapper_script(
@@ -282,9 +288,10 @@ def build_expected_settings(source_path: Path, profile_config: dict) -> str | No
     except (json.JSONDecodeError, OSError):
         return None
 
-    attribution = profile_config.get("attribution")
-    if attribution is not None:
+    if (attribution := profile_config.get("attribution")) is not None:
         data["attribution"] = attribution
+    if (plans_directory := profile_config.get("plansDirectory")) is not None:
+        data["plansDirectory"] = plans_directory
 
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 

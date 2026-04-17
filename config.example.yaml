@@ -20,6 +20,7 @@ profiles:
     model: sonnet
     add_dirs:
       - ~/devel/projects/company
+    plansDirectory: ~/.claude-profiles/work-team/plans
     attribution:
       commit: "🤖 Generated with Claude Code\n\nCo-Authored-By: Claude <noreply@anthropic.com>"
       pr: "🤖 Generated with [Claude Code](https://claude.ai/code)"

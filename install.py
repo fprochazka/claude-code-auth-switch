@@ -24,6 +24,7 @@ COPY_FILES = [
     "settings.json",
     "settings.local.json",
     "CLAUDE.md",
+    "keybindings.json",
 ]
 
 # Directories that are safe to symlink (files inside are real)

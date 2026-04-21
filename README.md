@@ -163,7 +163,7 @@ This replaces manual aliases like `alias claude-work='claude --add-dir ~/devel/p
 | `profiles.<name>.attribution` | | Attribution settings object patched into the profile's `settings.json` on every install |
 | `profiles.<name>.attribution.commit` | | Attribution text appended to git commit messages |
 | `profiles.<name>.attribution.pr` | | Attribution text appended to pull request descriptions |
-| `profiles.<name>.plansDirectory` | | Path written verbatim to the profile's `settings.json` as `plansDirectory` (Claude Code expands `~`) |
+| `profiles.<name>.plansDirectory` | | Path written to the profile's `settings.json` as `plansDirectory`. `~` is expanded at install time. |
 
 ### `install.py`
 

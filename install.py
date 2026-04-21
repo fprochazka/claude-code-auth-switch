@@ -153,7 +153,7 @@ def patch_settings_json(
     if (attribution := profile_config.get("attribution")) is not None:
         patches["attribution"] = attribution
     if (plans_directory := profile_config.get("plansDirectory")) is not None:
-        patches["plansDirectory"] = plans_directory
+        patches["plansDirectory"] = os.path.expanduser(plans_directory)
 
     if not patches:
         return
@@ -292,7 +292,7 @@ def build_expected_settings(source_path: Path, profile_config: dict) -> str | No
     if (attribution := profile_config.get("attribution")) is not None:
         data["attribution"] = attribution
     if (plans_directory := profile_config.get("plansDirectory")) is not None:
-        data["plansDirectory"] = plans_directory
+        data["plansDirectory"] = os.path.expanduser(plans_directory)
 
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 

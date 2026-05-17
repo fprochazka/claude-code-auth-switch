@@ -167,9 +167,6 @@ def patch_settings_json(
     if (plans_directory := profile_config.get("plansDirectory")) is not None:
         patches["plansDirectory"] = os.path.expanduser(plans_directory)
 
-    if not patches:
-        return
-
     settings_path = profile_dir / "settings.json"
     if not settings_path.exists():
         return
@@ -177,6 +174,14 @@ def patch_settings_json(
     try:
         data = json.loads(settings_path.read_text())
     except (json.JSONDecodeError, OSError):
+        return
+
+    if "plansDirectory" not in patches and isinstance(existing := data.get("plansDirectory"), str):
+        expanded = os.path.expanduser(existing)
+        if expanded != existing:
+            patches["plansDirectory"] = expanded
+
+    if not patches:
         return
 
     changed = [key for key, value in patches.items() if data.get(key) != value]

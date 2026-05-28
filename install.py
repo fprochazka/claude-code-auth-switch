@@ -46,6 +46,7 @@ SYMLINK_DIRS = [
     "agents",
     "plugins",
     "projects",
+    "scripts",
 ]
 
 DEFAULT_CONFIG_PATH = Path("~/.claude-profiles/config.yaml").expanduser()

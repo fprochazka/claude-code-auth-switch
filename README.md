@@ -33,6 +33,7 @@ The install script creates a profile directory per account under `~/.claude-prof
 │   ├── agents/   -> ~/.claude/agents/     # Symlinked (read-only)
 │   ├── plugins/  -> ~/.claude/plugins/    # Symlinked (read-only)
 │   ├── projects/ -> ~/.claude/projects/   # Symlinked (shared state)
+│   ├── scripts/  -> ~/.claude/scripts/    # Symlinked (read-only)
 │   ├── .credentials.json   # Created by Claude on first login
 │   └── .claude.json         # Created by Claude on first login
 ├── work-team/               # Profile: claude-work-team
@@ -178,7 +179,7 @@ This replaces manual aliases like `alias claude-work='claude --add-dir ~/devel/p
 | Type | Files | Behavior |
 |------|-------|----------|
 | **Copied** | `settings.json`, `settings.local.json`, `keybindings.json`, and all top-level `*.md` files (e.g. `CLAUDE.md`) | Copied on first install. Use `--sync` to refresh from source. |
-| **Symlinked** | `commands/`, `skills/`, `agents/`, `plugins/`, `projects/` | Always symlinked. Changes are shared across all profiles. |
+| **Symlinked** | `commands/`, `skills/`, `agents/`, `plugins/`, `projects/`, `scripts/` | Always symlinked. Changes are shared across all profiles. |
 | **Patched** | `settings.json` (`attribution`, `plansDirectory`) | Set from profile config on every install. |
 | **Selectively synced** | `.claude.json` (`mcpServers`) | Only the `mcpServers` key is synced from `~/.claude.json` on every install. Other keys in `.claude.json` are per-profile state. |
 | **Per-profile** | `.credentials.json`, `.claude.json`, `teams/`, `history.jsonl` | Created automatically by Claude Code on first use. |

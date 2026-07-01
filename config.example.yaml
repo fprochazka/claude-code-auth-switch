@@ -18,6 +18,10 @@ profiles:
   work-team:
     description: "Company team subscription"
     model: sonnet
+    # Pin what the sonnet/opus/haiku/fable aliases resolve to (alias -> specific version id)
+    pinned_models:
+      sonnet: claude-sonnet-4-5-20250929
+      opus: claude-opus-4-8
     add_dirs:
       - ~/devel/projects/company
     plansDirectory: ~/.claude-profiles/work-team/plans

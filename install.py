@@ -53,6 +53,10 @@ DEFAULT_CONFIG_PATH = Path("~/.claude-profiles/config.yaml").expanduser()
 DEFAULT_SOURCE_DIR = Path("~/.claude").expanduser()
 DEFAULT_BIN_DIR = Path("~/.local/bin").expanduser()
 
+# Model classes whose alias (sonnet/opus/haiku/fable) can be pinned to a specific
+# version id via the corresponding ANTHROPIC_DEFAULT_<CLASS>_MODEL env var.
+VALID_MODEL_CLASSES = ("sonnet", "opus", "haiku", "fable")
+
 
 def load_config(config_path: Path) -> dict:
     with open(config_path) as f:
@@ -65,6 +69,32 @@ def load_config(config_path: Path) -> dict:
 
 def expand_path(path_str: str) -> Path:
     return Path(os.path.expanduser(path_str))
+
+
+def pinned_models_to_env(profile_name: str, pinned_models: dict) -> dict[str, str]:
+    """Translate a profile's pinned_models mapping into ANTHROPIC_DEFAULT_<CLASS>_MODEL env vars.
+
+    Each entry pins what a model-class alias (sonnet/opus/haiku/fable) resolves to. An unknown
+    class key or a non-string / empty version aborts the whole install (same fatal style as load_config).
+    """
+    env: dict[str, str] = {}
+    for model_class, version in pinned_models.items():
+        if model_class not in VALID_MODEL_CLASSES:
+            print(
+                f"Error: Profile '{profile_name}' has unknown pinned_models class '{model_class}' "
+                f"(valid classes: {', '.join(VALID_MODEL_CLASSES)})",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not isinstance(version, str) or not version.strip():
+            print(
+                f"Error: Profile '{profile_name}' has invalid pinned_models value for '{model_class}': "
+                f"expected a non-empty model version id string",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        env[f"ANTHROPIC_DEFAULT_{model_class.upper()}_MODEL"] = version
+    return env
 
 
 def setup_profile_dir(
@@ -427,6 +457,12 @@ def main() -> None:
         env_vars = profile_config.get("env", {}) or {}
         add_dirs = profile_config.get("add_dirs", []) or []
         model = profile_config.get("model") or None
+        pinned_models = profile_config.get("pinned_models", {}) or {}
+
+        # Pin alias→version via ANTHROPIC_DEFAULT_<CLASS>_MODEL vars, merged so an explicit
+        # env: entry for the same var wins over the pinned_models-derived value.
+        pinned_env = pinned_models_to_env(profile_name, pinned_models)
+        env_vars = {**pinned_env, **env_vars}
 
         profile_dir = profiles_base / profile_name
         script_name = f"claude-{profile_name}"

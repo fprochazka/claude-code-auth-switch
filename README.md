@@ -149,6 +149,22 @@ profiles:
 
 This replaces manual aliases like `alias claude-work='claude --add-dir ~/devel/projects/company'`.
 
+### Pinned model versions
+
+The `pinned_models` config option maps a model *class* — `sonnet`, `opus`, `haiku`, or `fable` — to a specific model version id, so the corresponding alias always resolves to that exact version instead of whatever the class currently points at:
+
+```yaml
+profiles:
+  work-team:
+    pinned_models:
+      sonnet: claude-sonnet-4-5-20250929
+      opus: claude-opus-4-8
+```
+
+Under the hood each entry becomes an `ANTHROPIC_DEFAULT_<CLASS>_MODEL` alias-resolution environment variable (`ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_DEFAULT_FABLE_MODEL`) exported by the generated wrapper. An explicit `env:` entry for the same variable wins over the `pinned_models`-derived value, so you can always override a single class by hand. Any class key outside the four valid ones, or an empty/non-string version, aborts the install with a clear error.
+
+These variables only take effect when you launch through the generated `claude-<name>` wrapper — they are exported by the wrapper, not written into `settings.json`, so running plain `claude` is unaffected.
+
 ## Configuration reference
 
 ### `config.yaml`
@@ -159,6 +175,7 @@ This replaces manual aliases like `alias claude-work='claude --add-dir ~/devel/p
 | `bin_dir` | `~/.local/bin` | Where to install wrapper scripts |
 | `profiles.<name>.description` | `""` | Human-readable profile description |
 | `profiles.<name>.model` | | Default model to use (e.g., `sonnet`, `opus`). Overridden by `--model` on the command line. |
+| `profiles.<name>.pinned_models` | `{}` | Map of model class (`sonnet`, `opus`, `haiku`, `fable`) to a specific version id. Emitted as `ANTHROPIC_DEFAULT_<CLASS>_MODEL` env vars in the wrapper. See [Pinned model versions](#pinned-model-versions). |
 | `profiles.<name>.env` | `{}` | Environment variables to set before launching Claude |
 | `profiles.<name>.add_dirs` | `[]` | Additional directories to pass via `--add-dir` |
 | `profiles.<name>.attribution` | | Attribution settings object patched into the profile's `settings.json` on every install |

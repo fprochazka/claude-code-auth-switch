@@ -181,6 +181,7 @@ These variables only take effect when you launch through the generated `claude-<
 | `profiles.<name>.attribution` | | Attribution settings object patched into the profile's `settings.json` on every install |
 | `profiles.<name>.attribution.commit` | | Attribution text appended to git commit messages |
 | `profiles.<name>.attribution.pr` | | Attribution text appended to pull request descriptions |
+| `profiles.<name>.attribution.sessionUrl` | | Boolean. Keeps (`true`) or drops (`false`) the `Claude-Session: <url>` trailer that web/Remote Control sessions add to commits and PRs. Independent of `commit`/`pr`; omit to keep Claude Code's default. Set `false` to avoid leaking session links into public repo history. |
 | `profiles.<name>.plansDirectory` | | Path written to the profile's `settings.json` as `plansDirectory`. `~` is expanded at install time. |
 
 ### `install.py`

@@ -28,6 +28,10 @@ profiles:
     attribution:
       commit: "🤖 Generated with Claude Code\n\nCo-Authored-By: Claude <noreply@anthropic.com>"
       pr: "🤖 Generated with [Claude Code](https://claude.ai/code)"
+      # Keep (true) or drop (false) the `Claude-Session: <url>` trailer that web/Remote Control
+      # sessions add to commits and PRs. Independent of commit/pr above. Omit to keep Claude Code's
+      # default. Set false to avoid leaking session links into public repo history.
+      sessionUrl: false
 
   work-vertexgcp:
     description: "Company via Google Cloud Vertex AI"

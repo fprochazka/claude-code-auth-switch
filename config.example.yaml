@@ -1,15 +1,21 @@
 # Claude Code Multi-Account Profile Configuration
-# Copy to ~/.claude-profiles/config.yaml and edit
+# Copy to ~/.claude/auth-switch.yaml and edit
 #
 # Profile names are used to derive:
-#   - Config dir: ~/.claude-profiles/<name>/
+#   - Config dir: <profiles_dir>/<name>/
 #   - Wrapper script: <bin_dir>/claude-<name>
+#
+# Secret env values belong in the sibling file auth-switch.secrets.yaml, which must be
+# gitignored. See config.secrets.example.yaml.
 
 # Source directory for shared configuration (default: ~/.claude)
 source_dir: ~/.claude
 
 # Install wrapper scripts here (default: ~/.local/bin)
 bin_dir: ~/.local/bin
+
+# Create profile directories here (default: ~/.claude-profiles)
+# profiles_dir: ~/.claude-profiles
 
 profiles:
   personal:

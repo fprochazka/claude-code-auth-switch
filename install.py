@@ -2,7 +2,7 @@
 """
 Claude Code Multi-Account Profile Manager
 
-Reads ~/.claude-profiles/config.yaml and creates isolated profile directories
+Reads ~/.claude/auth-switch.yaml and creates isolated profile directories
 with shared configuration, then installs wrapper scripts to bin_dir.
 """
 
@@ -12,6 +12,7 @@ import os
 import difflib
 import shutil
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -49,9 +50,12 @@ SYMLINK_DIRS = [
     "scripts",
 ]
 
-DEFAULT_CONFIG_PATH = Path("~/.claude-profiles/config.yaml").expanduser()
+DEFAULT_CONFIG_PATH = Path("~/.claude/auth-switch.yaml").expanduser()
+# Kept working so an existing install does not break when ~/.claude/auth-switch.yaml is absent.
+LEGACY_CONFIG_PATH = Path("~/.claude-profiles/config.yaml").expanduser()
 DEFAULT_SOURCE_DIR = Path("~/.claude").expanduser()
 DEFAULT_BIN_DIR = Path("~/.local/bin").expanduser()
+DEFAULT_PROFILES_DIR = Path("~/.claude-profiles").expanduser()
 
 # Model classes whose alias (sonnet/opus/haiku/fable) can be pinned to a specific
 # version id via the corresponding ANTHROPIC_DEFAULT_<CLASS>_MODEL env var.
@@ -65,6 +69,133 @@ def load_config(config_path: Path) -> dict:
         print(f"Error: No profiles defined in {config_path}", file=sys.stderr)
         sys.exit(1)
     return config
+
+
+def resolve_config_path(cli_arg: Path | None, new_default: Path, legacy_default: Path) -> Path:
+    """Pick the config file to read.
+
+    An explicit --config always wins, even when it does not exist, so the caller reports the
+    path the user actually asked for. Otherwise the new default wins, and the legacy path is
+    only used when the new default is absent.
+    """
+    if cli_arg is not None:
+        return cli_arg.expanduser()
+    if new_default.exists():
+        return new_default
+    if legacy_default.exists():
+        print(
+            f"Note: using legacy config {legacy_default} — the preferred location is {new_default}",
+            file=sys.stderr,
+        )
+        return legacy_default
+    return new_default
+
+
+def secrets_path_for(config_path: Path) -> Path:
+    """Sibling secrets file: auth-switch.yaml -> auth-switch.secrets.yaml."""
+    return config_path.with_name(f"{config_path.stem}.secrets.yaml")
+
+
+def check_secrets_git_safety(secrets_path: Path) -> None:
+    """Refuse to run when the secrets file could reach a git remote.
+
+    Tracked file -> fatal. Inside a repo but not ignored -> fatal. Outside a repo, or without a
+    git binary, there is nothing to check. Git output stays captured so no path or content leaks.
+    """
+    directory = str(secrets_path.parent)
+    name = str(secrets_path)
+
+    def run(*git_args: str) -> int | None:
+        try:
+            return subprocess.run(
+                ["git", "-C", directory, *git_args],
+                capture_output=True,
+            ).returncode
+        except FileNotFoundError:
+            return None
+
+    tracked = run("ls-files", "--error-unmatch", name)
+    if tracked is None:
+        return
+    if tracked == 0:
+        print(f"Error: Secrets file {secrets_path} is tracked in git.", file=sys.stderr)
+        print(f"Remove it from the index and ignore it:", file=sys.stderr)
+        print(f"  git -C {directory} rm --cached {secrets_path.name}", file=sys.stderr)
+        print(f"  echo '{secrets_path.name}' >> {secrets_path.parent / '.gitignore'}", file=sys.stderr)
+        sys.exit(1)
+    if tracked == 128:
+        return
+
+    ignored = run("check-ignore", "-q", name)
+    if ignored in (0, 128, None):
+        return
+    print(f"Error: Secrets file {secrets_path} is inside a git repository but is not ignored.", file=sys.stderr)
+    print(f"Add it to .gitignore before running the installer:", file=sys.stderr)
+    print(f"  echo '{secrets_path.name}' >> {secrets_path.parent / '.gitignore'}", file=sys.stderr)
+    sys.exit(1)
+
+
+def load_secrets(secrets_path: Path, config: dict) -> dict[str, dict[str, str]]:
+    """Read the secrets file into {profile_name: {env_key: value}}.
+
+    The file mirrors the main config but allows only profiles.<name>.env with string values.
+    Anything else aborts the install, so a typo cannot silently drop a credential.
+    """
+    with open(secrets_path) as f:
+        data = yaml.safe_load(f)
+    if data is None:
+        return {}
+
+    def fatal(message: str) -> None:
+        print(f"Error: {secrets_path}: {message}", file=sys.stderr)
+        sys.exit(1)
+
+    if not isinstance(data, dict):
+        fatal("expected a mapping with a single top-level 'profiles' key")
+    if extra := sorted(set(data) - {"profiles"}):
+        fatal(f"only the top-level key 'profiles' is allowed, found: {', '.join(extra)}")
+
+    profiles = data.get("profiles") or {}
+    if not isinstance(profiles, dict):
+        fatal("'profiles' must be a mapping of profile name to settings")
+
+    secrets: dict[str, dict[str, str]] = {}
+    for profile_name, profile_config in profiles.items():
+        if profile_name not in config["profiles"]:
+            fatal(f"profile '{profile_name}' is not defined in the main config")
+        if profile_config is None:
+            continue
+        if not isinstance(profile_config, dict):
+            fatal(f"profile '{profile_name}' must be a mapping containing only 'env'")
+        if extra := sorted(set(profile_config) - {"env"}):
+            fatal(f"profile '{profile_name}' may only contain 'env', found: {', '.join(extra)}")
+        env = profile_config.get("env") or {}
+        if not isinstance(env, dict):
+            fatal(f"profile '{profile_name}': 'env' must be a mapping of variable name to string value")
+        for key, value in env.items():
+            if not isinstance(key, str):
+                fatal(f"profile '{profile_name}': env variable names must be strings")
+            if not isinstance(value, str):
+                fatal(f"profile '{profile_name}': env value for '{key}' must be a string (quote it in YAML)")
+        secrets[profile_name] = dict(env)
+    return secrets
+
+
+def merge_secret_env(profile_name: str, env_vars: dict[str, str], secret_env: dict[str, str]) -> dict[str, str]:
+    """Merge secret env vars into a profile's env, rejecting keys defined in both files.
+
+    A key in both places has no obvious winner, so the install stops instead of guessing.
+    The value is never printed — only the profile and the variable name.
+    """
+    if collisions := sorted(set(env_vars) & set(secret_env)):
+        for key in collisions:
+            print(
+                f"Error: Profile '{profile_name}' defines env var '{key}' in both the config "
+                f"and the secrets file — keep it in exactly one of them",
+                file=sys.stderr,
+            )
+        sys.exit(1)
+    return {**env_vars, **secret_env}
 
 
 def expand_path(path_str: str) -> Path:
@@ -401,8 +532,8 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=Path,
-        default=DEFAULT_CONFIG_PATH,
-        help=f"Path to config file (default: {DEFAULT_CONFIG_PATH})",
+        default=None,
+        help=f"Path to config file (default: {DEFAULT_CONFIG_PATH}, falling back to {LEGACY_CONFIG_PATH})",
     )
     parser.add_argument(
         "--sync",
@@ -416,18 +547,23 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    config_path = args.config.expanduser()
+    config_path = resolve_config_path(args.config, DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH)
     if not config_path.exists():
         print(f"Error: Config file not found: {config_path}", file=sys.stderr)
         print(f"Create it from config.example.yaml:", file=sys.stderr)
-        print(f"  mkdir -p ~/.claude-profiles", file=sys.stderr)
-        print(f"  cp config.example.yaml ~/.claude-profiles/config.yaml", file=sys.stderr)
+        print(f"  cp config.example.yaml ~/.claude/auth-switch.yaml", file=sys.stderr)
         sys.exit(1)
 
     config = load_config(config_path)
     source_dir = expand_path(config.get("source_dir", str(DEFAULT_SOURCE_DIR)))
     bin_dir = expand_path(config.get("bin_dir", str(DEFAULT_BIN_DIR)))
-    profiles_base = config_path.parent
+    profiles_base = expand_path(config.get("profiles_dir", str(DEFAULT_PROFILES_DIR)))
+
+    secrets_path = secrets_path_for(config_path)
+    secrets: dict[str, dict[str, str]] = {}
+    if secrets_path.exists():
+        check_secrets_git_safety(secrets_path)
+        secrets = load_secrets(secrets_path, config)
 
     if not source_dir.exists():
         print(f"Error: Source directory not found: {source_dir}", file=sys.stderr)
@@ -458,6 +594,8 @@ def main() -> None:
         add_dirs = profile_config.get("add_dirs", []) or []
         model = profile_config.get("model") or None
         pinned_models = profile_config.get("pinned_models", {}) or {}
+
+        env_vars = merge_secret_env(profile_name, env_vars, secrets.get(profile_name, {}))
 
         # Pin alias→version via ANTHROPIC_DEFAULT_<CLASS>_MODEL vars, merged so an explicit
         # env: entry for the same var wins over the pinned_models-derived value.

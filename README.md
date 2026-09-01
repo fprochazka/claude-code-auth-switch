@@ -18,11 +18,14 @@ Run them in parallel across different project directories without credential col
 
 Claude Code's `CLAUDE_CONFIG_DIR` environment variable redirects all configuration and credential storage to a custom directory. We [verified in the binary](docs/Binary-Analysis-and-Design-Decisions.md) that this provides **full isolation** — including the `~/.claude.json` state file, which contrary to [some reports](docs/Gemini-Symlink-Behavior-Research.md) is **not** hardcoded to the home directory.
 
-The install script creates a profile directory per account under `~/.claude-profiles/` and generates thin wrapper scripts that set the right environment variables before `exec`-ing `claude`:
+The install script reads `~/.claude/auth-switch.yaml`, creates a profile directory per account under `~/.claude-profiles/`, and generates thin wrapper scripts that set the right environment variables before `exec`-ing `claude`:
 
 ```
+~/.claude/
+├── auth-switch.yaml          # Your profile definitions
+└── auth-switch.secrets.yaml  # Secret env values (gitignored, optional)
+
 ~/.claude-profiles/
-├── config.yaml              # Your profile definitions
 ├── personal/                # Profile: claude-personal
 │   ├── settings.json        # Copied from ~/.claude/ (mutable)
 │   ├── settings.local.json  # Copied from ~/.claude/ (mutable)
@@ -63,15 +66,15 @@ The install script creates a profile directory per account under `~/.claude-prof
 2. **Create your config:**
 
    ```bash
-   mkdir -p ~/.claude-profiles
-   cp config.example.yaml ~/.claude-profiles/config.yaml
+   cp config.example.yaml ~/.claude/auth-switch.yaml
    ```
 
-3. **Edit `~/.claude-profiles/config.yaml`** with your profiles:
+3. **Edit `~/.claude/auth-switch.yaml`** with your profiles:
 
    ```yaml
    source_dir: ~/.claude
    bin_dir: ~/.local/bin
+   profiles_dir: ~/.claude-profiles
 
    profiles:
      personal:
@@ -165,14 +168,42 @@ Under the hood each entry becomes an `ANTHROPIC_DEFAULT_<CLASS>_MODEL` alias-res
 
 These variables only take effect when you launch through the generated `claude-<name>` wrapper — they are exported by the wrapper, not written into `settings.json`, so running plain `claude` is unaffected.
 
+### Secrets
+
+The main config is meant to be committed. An API key inside an `env:` entry is not. Put those values in a secrets file that sits next to the main config and carries the same stem: `~/.claude/auth-switch.secrets.yaml` for the default location, `config.secrets.yaml` for the legacy one. The installer loads it when it exists, and runs normally when it does not.
+
+```yaml
+# ~/.claude/auth-switch.secrets.yaml
+profiles:
+  work-team:
+    env:
+      OTEL_EXPORTER_OTLP_HEADERS: "dd-api-key=<your-api-key>"
+```
+
+The file has the same shape as the main config, restricted to one thing: `profiles.<name>.env` with string values. Any other top-level key, any other key inside a profile, a profile name that the main config does not define, or a non-string env value aborts the install with an error naming the offending key.
+
+Secret env vars merge into the profile's `env` before the wrapper is written, and behave exactly like main-config env vars — they win over a value derived from `pinned_models`. Defining the same variable in both files is a fatal error instead of a silent precedence rule. The message names the profile and the variable, never the value.
+
+The installer also refuses to use a secrets file that git could publish. Two checks run before the file is read:
+
+1. The file is **tracked** in git → error. Remove it from the index with `git rm --cached`, then ignore it.
+2. The file is inside a git repository and **not ignored** → error. Add its name to `.gitignore`.
+
+A file outside any git repository passes both checks, and a missing `git` binary skips them.
+
+Because `~/.claude` is a good candidate for version control, this matters most there. With an allowlist-style `.gitignore` — a leading `*` plus `!` entries for the files you want — the secrets file is ignored by default and needs no rule, while the main config needs an explicit `!/auth-switch.yaml` line to be committed at all.
+
 ## Configuration reference
 
-### `config.yaml`
+### `auth-switch.yaml`
+
+The default config path is `~/.claude/auth-switch.yaml`. When that file does not exist, the installer falls back to the legacy `~/.claude-profiles/config.yaml` and prints a note naming the preferred location. `--config PATH` overrides both.
 
 | Field | Default | Description |
 |-------|---------|-------------|
 | `source_dir` | `~/.claude` | Directory to copy/symlink shared config from |
 | `bin_dir` | `~/.local/bin` | Where to install wrapper scripts |
+| `profiles_dir` | `~/.claude-profiles` | Where to create the per-profile config directories. `~` is expanded. |
 | `profiles.<name>.description` | `""` | Human-readable profile description |
 | `profiles.<name>.model` | | Default model to use (e.g., `sonnet`, `opus`). Overridden by `--model` on the command line. |
 | `profiles.<name>.pinned_models` | `{}` | Map of model class (`sonnet`, `opus`, `haiku`, `fable`) to a specific version id. Emitted as `ANTHROPIC_DEFAULT_<CLASS>_MODEL` env vars in the wrapper. See [Pinned model versions](#pinned-model-versions). |
@@ -184,11 +215,17 @@ These variables only take effect when you launch through the generated `claude-<
 | `profiles.<name>.attribution.sessionUrl` | | Boolean. Keeps (`true`) or drops (`false`) the `Claude-Session: <url>` trailer that web/Remote Control sessions add to commits and PRs. Independent of `commit`/`pr`; omit to keep Claude Code's default. Set `false` to avoid leaking session links into public repo history. |
 | `profiles.<name>.plansDirectory` | | Path written to the profile's `settings.json` as `plansDirectory`. `~` is expanded at install time. |
 
+### `auth-switch.secrets.yaml`
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `profiles.<name>.env` | `{}` | Secret environment variables, merged into the profile's `env`. The only key this file accepts. See [Secrets](#secrets). |
+
 ### `install.py`
 
 | Flag | Description |
 |------|-------------|
-| `--config PATH` | Config file path (default: `~/.claude-profiles/config.yaml`) |
+| `--config PATH` | Config file path (default: `~/.claude/auth-switch.yaml`, falling back to `~/.claude-profiles/config.yaml`) |
 | `--sync` | Re-copy mutable files from source. If a profile file has diverged (contains changes not in source), shows a diff and exits — prompting you to merge first |
 | `--sync --force` | Force overwrite of diverged profile files without prompting |
 
@@ -205,7 +242,7 @@ These variables only take effect when you launch through the generated `claude-<
 ## Re-syncing after config changes
 
 ```bash
-# Add/remove profiles, update env vars → re-run install
+# Edited ~/.claude/auth-switch.yaml or ~/.claude/auth-switch.secrets.yaml → re-run install
 # (also syncs mcpServers from ~/.claude.json into each profile)
 python3 install.py
 

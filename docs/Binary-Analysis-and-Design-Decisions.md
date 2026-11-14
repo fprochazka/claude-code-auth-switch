@@ -77,15 +77,59 @@ The specific issues Gemini cited (CVE-2026-25724 path resolution, plugin state m
 
 **Symlink directories, copy files.** We symlink `commands/`, `skills/`, `agents/`, `plugins/`, and `projects/` from the source directory. This keeps all sessions, plugins, and customizations in one shared location. Only the three mutable files are copied.
 
-## 4. macOS Keychain collision
+## 4. macOS Keychain entry per config directory
 
-### Gemini's claim (CORRECT, but irrelevant)
+### Gemini's claim (OUTDATED)
 
 The first Gemini report extensively documented Issue #20553 where Claude Code hardcodes the macOS Keychain service name, causing credential collisions between profiles.
 
-### Our situation
+### What we found
 
-We're on Linux. Credentials are stored in flat files (`.credentials.json`), not in a system Keychain. The `CLAUDE_CONFIG_DIR` approach gives each profile its own `.credentials.json` automatically. This entire class of problems doesn't apply.
+Checked on 2026-10-06 against Claude Code 2.1.289 (`~/.local/share/claude/versions/2.1.289`, the Linux x86-64 build). 2.1.284 has the same code. The Linux build drops the macOS-only branches at build time, but the shared module that builds the Keychain service name is still in it (minified names as in 2.1.289):
+
+```javascript
+var kCn = "-credentials";
+
+// Directory that holds .credentials.json
+function HS() {
+  let e = process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+  if (e !== void 0) return (e || join(homedir(), ".claude")).normalize("NFC");
+  return we();
+}
+
+// Keychain service name
+function tGe(e = "") {
+  let n = process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR,
+      t = n !== void 0 ? !n : !process.env.CLAUDE_CONFIG_DIR,
+      r = n !== void 0 ? n.normalize("NFC") : we(),
+      c = t ? "" : `-${createHash("sha256").update(r).digest("hex").substring(0, 8)}`;
+  return `Claude Code${pn().OAUTH_FILE_SUFFIX}${e}${c}`;
+}
+```
+
+The config directory function is the same as in section 1:
+
+```javascript
+var we = memoize(() => (process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude")).normalize("NFC"));
+```
+
+`OAUTH_FILE_SUFFIX` is `""` in the production OAuth config, and the credentials item is called with the `-credentials` suffix. The service name for the OAuth login is therefore:
+
+- `Claude Code-credentials` when `CLAUDE_CONFIG_DIR` is unset.
+- `Claude Code-credentials-<first 8 hex of sha256(CLAUDE_CONFIG_DIR)>` when it is set.
+
+The Keychain account is `$USER`, or the OS user name when `$USER` is unset. The binary reads the item with `security find-generic-password -a <user> -w -s <service>`. The storage modes include `keychain-with-plaintext-fallback`, and the plaintext file is `.credentials.json` in `HS()`, which is also the profile directory. On the Linux build the storage mode function returns `"file"`.
+
+Consequences:
+
+- Each profile directory gets its own Keychain entry, so the collision from #20553 should not happen. A user in that issue reported the same per-directory entries on macOS in 2.1.56. The issue is still open.
+- The hash covers the raw variable value after Unicode NFC normalization only. No `~` expansion, no trailing-slash removal, no symlink resolution. A different spelling of the same directory is a different Keychain entry.
+- Setting `CLAUDE_CONFIG_DIR` to the default `~/.claude` path still adds the hash, so it does not find the login stored under the plain name. [cenv](https://github.com/lukabudik/cenv) documents this gotcha.
+- `CLAUDE_SECURESTORAGE_CONFIG_DIR` overrides the directory for both the Keychain name and `.credentials.json`. An empty value means `~/.claude` with the plain name. The wrappers unset it with all other inherited `CLAUDE_*` variables.
+
+### Not verified
+
+Nobody has run this on a Mac. The binary analyzed is the Linux build, so the macOS read and write code itself was removed at build time. Only the shared name-building code and the `security` call sites are visible.
 
 ## 5. Machine ID telemetry bans
 
@@ -110,6 +154,7 @@ These aren't three competing personal subscriptions on the same hardware. A pers
 | Copy `settings.json`, `settings.local.json`, `CLAUDE.md` | Atomic writes would break symlinks to these files |
 | Symlink `commands/`, `skills/`, `agents/`, `plugins/`, `projects/` | Directory symlinks are transparent; files inside are real |
 | No Docker containerization | Unnecessary on Linux with `CLAUDE_CONFIG_DIR` providing full isolation |
+| No Keychain workaround for macOS | The Keychain service name includes a hash of `CLAUDE_CONFIG_DIR` (seen in the 2.1.289 binary, reported on macOS in 2.1.56, untested here) |
 | No `~/.claude.json` file swapping | `CLAUDE_CONFIG_DIR` handles this correctly (Gemini was wrong) |
 | No Machine ID spoofing | Three different auth backends, not three competing subscriptions |
 | Wrapper scripts with `exec claude` | Simple, debuggable, no runtime overhead |

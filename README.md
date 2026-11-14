@@ -1,6 +1,6 @@
 # claude-code-auth-switch
 
-> **Note:** This has only been tested on Linux. macOS and Windows may not work as expected — macOS in particular has a [Keychain collision bug](https://github.com/anthropics/claude-code/issues/20553) that breaks multi-account OAuth isolation.
+> **Note:** This has only been tested on Linux. Nobody has tested it on macOS or WSL yet. Reading the Claude Code binary suggests that macOS should work, because each profile directory gets its own Keychain entry, but that is not a tested result. Native Windows is not supported. See [macOS and WSL notes](#macos-and-wsl-notes).
 
 Run multiple [Claude Code](https://docs.anthropic.com/en/docs/claude-code) accounts side-by-side with isolated credentials, shared configuration, and zero Docker overhead.
 
@@ -49,8 +49,8 @@ The install script reads `~/.claude/auth-switch.yaml`, creates a profile directo
 
 ## Requirements
 
-- Linux (macOS has [Keychain-specific issues](docs/Gemini-Managing-Multiple-Claude-Accounts.md) not addressed here)
-- Python 3.10+ with [PyYAML](https://pypi.org/project/PyYAML/) (`pip install pyyaml`)
+- Linux. macOS and WSL are untested, see [macOS and WSL notes](#macos-and-wsl-notes).
+- Python 3.10+ with [PyYAML](https://pypi.org/project/PyYAML/) (`pip install pyyaml`). On macOS, `/usr/bin/python3` from the Xcode Command Line Tools is 3.9 and cannot run `install.py`.
 - Claude Code installed and available as `claude` on your `$PATH`
 - `~/.local/bin` on your `$PATH` (or configure a different `bin_dir`)
 
@@ -272,6 +272,45 @@ Authentication uses [Google Cloud Application Default Credentials](https://cloud
 gcloud auth application-default login
 ```
 
+## macOS and WSL notes
+
+Nobody has run this tool on macOS or WSL. Everything in this section comes from reading the Claude Code 2.1.289 binary, so treat it as expected behavior, not a tested result. If you try it, please open an issue with what you saw.
+
+### macOS
+
+Claude Code on macOS stores the OAuth login in the Keychain and falls back to `.credentials.json` in the config directory. When `CLAUDE_CONFIG_DIR` is set, the Keychain service name gets a suffix: `Claude Code-credentials-<hash>`, where `<hash>` is the first 8 hex characters of the SHA-256 of the `CLAUDE_CONFIG_DIR` value. Without the variable, the name is plain `Claude Code-credentials`. Each wrapper sets a different `CLAUDE_CONFIG_DIR`, so each profile should get its own Keychain entry, and profiles should not overwrite each other's logins. The [Binary Analysis](docs/Binary-Analysis-and-Design-Decisions.md#4-macos-keychain-entry-per-config-directory) doc has the code.
+
+[Issue #20553](https://github.com/anthropics/claude-code/issues/20553) reported that all profiles shared one Keychain entry. That was true in early 2026. A user in that issue confirmed per-directory entries on macOS in Claude Code 2.1.56, but the issue is still open.
+
+To see which entry a profile uses:
+
+```bash
+hash=$(printf '%s' "$HOME/.claude-profiles/personal" | shasum -a 256 | cut -c1-8)
+security find-generic-password -s "Claude Code-credentials-$hash" -a "$USER"
+```
+
+Gotchas:
+
+- **The hash covers the exact string.** Claude Code does not expand `~`, strip a trailing slash or resolve symlinks before hashing. If you move `profiles_dir`, or point it at the same directory through a different path, every profile reads as logged out and the old Keychain entries stay behind. `install.py` writes the expanded absolute path, so re-running it with the same config keeps the same entries.
+- **Never export `CLAUDE_CONFIG_DIR=~/.claude`.** The explicit default path produces a hashed name, not the plain `Claude Code-credentials` entry that your existing login uses, so plain `claude` reads as logged out. The wrappers unset every inherited `CLAUDE_*` variable, so they are not affected. [cenv](https://github.com/lukabudik/cenv) documents the same gotcha.
+- **A login in `~/.claude` does not carry over.** Log in once in every profile, as on Linux.
+- **Re-login after a reboot.** One user in issue #20553 reported that macOS blocked reads of the per-directory entries after a restart, because of the entry's access control list. The binary reads the Keychain by running the `security` command (`/usr/bin/security`), which that list allows, so this may not apply. Nobody has checked.
+
+Other macOS differences:
+
+- The wrappers are bash scripts. They run under the bash 3.2 that macOS ships, which was checked in a `bash:3.2` container, not on a Mac.
+- `~/.local/bin` is not on the macOS `$PATH` by default. Add it, or set `bin_dir` to a directory that is.
+
+### WSL
+
+Claude Code under WSL is the Linux build. The Linux build stores the login only in `.credentials.json` in the profile directory, and does not use the Windows Credential Manager. The isolation works the same as on Linux.
+
+For the browser login, Claude Code runs `$BROWSER`, or `xdg-open` when `$BROWSER` is unset. The binary has no WSL-specific browser opener. If no browser opens, Claude Code prints the login URL, and you open it in Windows by hand.
+
+### Native Windows
+
+Not supported. The wrappers are bash scripts.
+
 ## Environment variables
 
 Each wrapper script exports the following environment variables before launching `claude`:
@@ -292,7 +331,7 @@ fi
 
 ## Limitations
 
-- **Linux only.** macOS has a [Keychain collision bug](https://github.com/anthropics/claude-code/issues/20553) where multiple OAuth profiles overwrite each other's credentials regardless of `CLAUDE_CONFIG_DIR`.
+- **Tested on Linux only.** macOS and WSL should work based on the binary, but nobody has tested them. See [macOS and WSL notes](#macos-and-wsl-notes).
 - **Same-directory parallel execution** is not supported. Two profiles in the same project directory will fight over `.claude/history.jsonl.lock`. Use [git worktrees](https://git-scm.com/docs/git-worktree) if you need this.
 - **Copied files can diverge.** When Claude Code modifies `settings.json` in a profile (e.g., accepting a permission), the change is local to that profile. Run `install.py --sync` to reset from source.
 

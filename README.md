@@ -193,6 +193,39 @@ A file outside any git repository passes both checks, and a missing `git` binary
 
 Because `~/.claude` is a good candidate for version control, this matters most there. With an allowlist-style `.gitignore` — a leading `*` plus `!` entries for the files you want — the secrets file is ignored by default and needs no rule, while the main config needs an explicit `!/auth-switch.yaml` line to be committed at all.
 
+### Attribution from git config
+
+The commit and PR attribution can also come from git config, so it follows the directory you work in instead of the profile. Put a `[claude-code "attribution"]` section into a gitconfig that applies to a directory, for example a company gitconfig included by `includeIf`:
+
+```ini
+# ~/.gitconfig
+[includeIf "gitdir:~/devel/projects/company/"]
+    path = ~/devel/projects/company/.gitconfig
+```
+
+```ini
+# ~/devel/projects/company/.gitconfig
+[claude-code "attribution"]
+    commit = "🤖 Generated with Claude Code\n\nCo-Authored-By: Claude <noreply@anthropic.com>"
+    pr = "🤖 Generated with [Claude Code](https://claude.ai/code)"
+    sessionUrl = false
+```
+
+At launch, every wrapper runs `claude-auth-switch-attribution "$PWD"`, a small Python script that `install.py` installs into `bin_dir`. When the script finds any of the keys, the wrapper passes them as `claude --settings '{"attribution": {...}}'`. The keys are the same as in the profile's `attribution`: `commit` and `pr` are strings, where an empty string turns the attribution off, and `sessionUrl` is a git boolean (`true`/`yes`/`on`/`1`, `false`/`no`/`off`/`0`). An invalid boolean or an unknown key prints a warning and is ignored. A key that is not set stays unset, so Claude Code falls back to the next source for it.
+
+Which config applies depends on where you start Claude:
+
+- **Inside a git repository** git reads the config itself, so every `include` and `includeIf` works as it does for `git config`, including globs, `gitdir/i:`, `onbranch:` and `hasconfig:`. The repository's own `.git/config` can set the section too.
+- **Outside a git repository** git ignores every `gitdir:` condition. The script reads the global config and evaluates only `gitdir:` and `gitdir/i:` patterns that start with `~/`, `./` or `/`, end with `/`, and contain no `*`, `?` or `[`. Such a pattern matches the start directory and everything under it, by its path as given and by its resolved path. Other patterns are skipped. Starting in `~/devel/projects/company`, a directory that holds the company's repositories but is not one itself, uses the company attribution.
+
+Precedence, per key: git config wins over the profile's `attribution` in `auth-switch.yaml`, which wins over `~/.claude/settings.json`. Claude Code deep-merges settings sources, so a gitconfig that sets only `commit` keeps `pr` and `sessionUrl` from the profile.
+
+The attribution is fixed when Claude starts. A session started in a personal repository keeps the personal attribution even when it later works in a company directory added with `--add-dir`. Start Claude in the directory whose attribution you want.
+
+Subcommands such as `claude-personal mcp list` do not get the setting. If you pass your own `--settings` to a wrapper, the wrapper does not add its own, because Claude Code keeps only the last `--settings` flag instead of merging them. Put the attribution into your settings file when you need both.
+
+If the script is missing or fails, the wrapper prints a one-line warning and starts Claude without the git config attribution.
+
 ## Configuration reference
 
 ### `auth-switch.yaml`
@@ -202,14 +235,14 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | Field | Default | Description |
 |-------|---------|-------------|
 | `source_dir` | `~/.claude` | Directory to copy/symlink shared config from |
-| `bin_dir` | `~/.local/bin` | Where to install wrapper scripts |
+| `bin_dir` | `~/.local/bin` | Where to install wrapper scripts and the `claude-auth-switch-attribution` helper |
 | `profiles_dir` | `~/.claude-profiles` | Where to create the per-profile config directories. `~` is expanded. |
 | `profiles.<name>.description` | `""` | Human-readable profile description |
 | `profiles.<name>.model` | | Default model to use (e.g., `sonnet`, `opus`). Overridden by `--model` on the command line. |
 | `profiles.<name>.pinned_models` | `{}` | Map of model class (`sonnet`, `opus`, `haiku`, `fable`) to a specific version id. Emitted as `ANTHROPIC_DEFAULT_<CLASS>_MODEL` env vars in the wrapper. See [Pinned model versions](#pinned-model-versions). |
 | `profiles.<name>.env` | `{}` | Environment variables to set before launching Claude |
 | `profiles.<name>.add_dirs` | `[]` | Additional directories to pass via `--add-dir` |
-| `profiles.<name>.attribution` | | Attribution settings object patched into the profile's `settings.json` on every install |
+| `profiles.<name>.attribution` | | Attribution settings object patched into the profile's `settings.json` on every install. A `[claude-code "attribution"]` git config section overrides it per key, see [Attribution from git config](#attribution-from-git-config). |
 | `profiles.<name>.attribution.commit` | | Attribution text appended to git commit messages |
 | `profiles.<name>.attribution.pr` | | Attribution text appended to pull request descriptions |
 | `profiles.<name>.attribution.sessionUrl` | | Boolean. Keeps (`true`) or drops (`false`) the `Claude-Session: <url>` trailer that web/Remote Control sessions add to commits and PRs. Independent of `commit`/`pr`; omit to keep Claude Code's default. Set `false` to avoid leaking session links into public repo history. |
@@ -236,6 +269,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | **Copied** | `settings.json`, `settings.local.json`, `keybindings.json`, and all top-level `*.md` files (e.g. `CLAUDE.md`) | Copied on first install. Use `--sync` to refresh from source. |
 | **Symlinked** | `commands/`, `skills/`, `agents/`, `plugins/`, `projects/`, `scripts/` | Always symlinked. Changes are shared across all profiles. |
 | **Patched** | `settings.json` (`attribution`, `plansDirectory`) | Set from profile config on every install. |
+| **Per launch** | `--settings` (`attribution`) | Read from git config for the start directory every time a wrapper starts Claude. Never written to disk. See [Attribution from git config](#attribution-from-git-config). |
 | **Selectively synced** | `.claude.json` (`mcpServers`) | Only the `mcpServers` key is synced from `~/.claude.json` on every install. Other keys in `.claude.json` are per-profile state. |
 | **Per-profile** | `.credentials.json`, `.claude.json`, `teams/`, `history.jsonl` | Created automatically by Claude Code on first use. |
 
@@ -353,6 +387,16 @@ git config hooks.forbiddenPatternsFile ~/.config/git/forbidden-patterns.txt  # a
 ```
 
 The file holds one extended regex per line, matched case-insensitively. Blank lines and `#` comments are ignored. Until `hooks.forbiddenPatternsFile` points at a file with at least one pattern, both hooks refuse every commit and print how to fix it. The hooks use `mapfile`, so they need bash 4 or newer. Docs and examples use placeholder names such as `<your-project-id>` and `~/devel/projects/company`.
+
+## Development
+
+The tests use real git with a throwaway home directory and never touch your own config. Run them with [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv run --no-project --with pyyaml --with pytest pytest tests/
+```
+
+Or with `python3 -m pytest tests/` in an environment that has `pyyaml` and `pytest` installed.
 
 ## License
 

@@ -302,6 +302,19 @@ fi
 - [Gemini: Symlink Behavior Research](docs/Gemini-Symlink-Behavior-Research.md) — Gemini Deep Research report on Claude Code's file I/O and symlink handling
 - [Gemini: Managing Multiple Claude Accounts](docs/Gemini-Managing-Multiple-Claude-Accounts.md) — Gemini Deep Research report on multi-tenant Claude Code architecture
 
+## Development
+
+### Commit hooks
+
+The research behind this tool comes from real machines and real accounts. Home paths, account names, cloud project IDs and company names show up in terminals and binary dumps, and from there they can slip into a commit. `scripts/hooks` holds a pre-commit and a commit-msg hook. They refuse a commit when a staged line or the commit message matches a private identifier. The identifiers live in a file outside the repository, because a list in the repository would publish the strings that the hooks keep out. Set it up once per clone:
+
+```bash
+git config core.hooksPath scripts/hooks
+git config hooks.forbiddenPatternsFile ~/.config/git/forbidden-patterns.txt  # any path outside the repo
+```
+
+The file holds one extended regex per line, matched case-insensitively. Blank lines and `#` comments are ignored. Until `hooks.forbiddenPatternsFile` points at a file with at least one pattern, both hooks refuse every commit and print how to fix it. The hooks use `mapfile`, so they need bash 4 or newer. Docs and examples use placeholder names such as `<your-project-id>` and `~/devel/projects/company`.
+
 ## License
 
 MIT

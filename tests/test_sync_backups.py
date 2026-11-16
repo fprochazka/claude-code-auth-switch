@@ -61,19 +61,24 @@ def test_force_sync_without_changes_is_quiet_and_backs_up_nothing(sandbox, synce
     result = sandbox.run_install("--config", config, "--sync", "--force")
 
     assert detail_lines(result.stdout) == []
+    assert "Backups of replaced files" not in result.stdout
     assert not list(profiles.glob(f"*/{BACKUPS}"))
 
 
-def test_force_sync_keeps_the_newest_backups(sandbox, synced):
+@pytest.mark.parametrize("flags", [["--sync"], ["--sync", "--force"]])
+def test_every_sync_that_replaces_a_file_keeps_its_own_backup(sandbox, synced, flags):
     config, source_dir, profiles = synced
-    backups = profiles / "personal" / BACKUPS
-    for day in range(1, 26):
-        (backups / f"202601{day:02d}T000000Z").mkdir(parents=True)
-    (profiles / "personal" / "keybindings.json").write_text("[1]\n")
+    lines = [f"line {n}\n" for n in range(25)]
+    (source_dir / "keybindings.json").write_text("".join(lines))
+    (profiles / "work-team" / "keybindings.json").write_text("".join(lines))
+    keybindings = profiles / "personal" / "keybindings.json"
 
-    sandbox.run_install("--config", config, "--sync", "--force")
+    for run in range(25):
+        # Only a removed line, so plain --sync replaces the file without reporting a divergence.
+        keybindings.write_text("".join(lines[:run] + lines[run + 1:]))
+        result = sandbox.run_install("--config", config, *flags)
+        assert "never deletes them; remove them with rm" in result.stdout
 
-    kept = sorted(p.name for p in backups.iterdir())
-    assert len(kept) == 20
-    assert kept[0] == "20260107T000000Z"
-    assert (backups / kept[-1] / "keybindings.json").read_text() == "[1]\n"
+    backups = sorted((profiles / "personal" / BACKUPS).iterdir())
+    assert len(backups) == 25
+    assert sorted(next(iter(set(lines) - set((b / "keybindings.json").read_text().splitlines(keepends=True)))) for b in backups) == sorted(lines)

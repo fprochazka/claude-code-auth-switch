@@ -68,9 +68,8 @@ SYMLINK_DIRS = [
     "scripts",
 ]
 
-# Profile files that --sync replaces are kept below the profile root, the newest KEEP_BACKUPS runs per profile.
+# Profile files that --sync replaces are kept below the profile root. The tool never deletes them.
 BACKUPS_DIR_NAME = ".auth-switch-backups"
-KEEP_BACKUPS = 20
 
 DEFAULT_CONFIG_PATH = Path("~/.claude/auth-switch.yaml").expanduser()
 # Kept working so an existing install does not break when ~/.claude/auth-switch.yaml is absent.
@@ -269,7 +268,7 @@ class ProfileBackup:
 
     The directory is created only when a file is backed up, so a run that changes nothing leaves no
     trace. It sits below the profile root and keeps the file names, so Claude Code does not load a
-    backed-up CLAUDE.md as instructions.
+    backed-up CLAUDE.md as instructions. The tool never deletes a backup; the user removes them.
     """
 
     def __init__(self, profile_dir: Path, stamp: str):
@@ -288,13 +287,6 @@ class ProfileBackup:
         target = self.directory / path.name
         shutil.copy2(path, target)
         print(f"  backed up {path.name} to {target}")
-
-    def prune(self) -> None:
-        if self.directory is None:
-            return
-        backups = sorted(entry for entry in self.root.iterdir() if entry.is_dir() and not entry.is_symlink())
-        for old in backups[:-KEEP_BACKUPS]:
-            shutil.rmtree(old)
 
 
 def expected_copy(source_dir: Path, filename: str, profile_config: dict, session_start_hook: str | None) -> bytes:
@@ -334,8 +326,6 @@ def setup_profile_dir(
                 backup.save(dst)
         shutil.copy2(str(src), str(dst))
         print(f"  {'synced' if force_sync else 'copied'} {filename}")
-    if backup is not None:
-        backup.prune()
 
     # Create directory symlinks
     for dirname in SYMLINK_DIRS:
@@ -773,6 +763,7 @@ def install(config_arg: Path | None, sync: bool, force: bool) -> None:
 
     source_claude_json_path = Path.home() / ".claude.json"
     backup_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backups: list[ProfileBackup] = []
     active_script_names: set[str] = set()
 
     for profile_name, profile_config in config["profiles"].items():
@@ -798,10 +789,9 @@ def install(config_arg: Path | None, sync: bool, force: bool) -> None:
         print(f"\nProfile: {profile_name}")
 
         # Setup profile directory with copies and symlinks
-        setup_profile_dir(
-            profile_name, profile_dir, source_dir, sync, profile_config, session_start_hook,
-            ProfileBackup(profile_dir, backup_stamp),
-        )
+        backup = ProfileBackup(profile_dir, backup_stamp)
+        backups.append(backup)
+        setup_profile_dir(profile_name, profile_dir, source_dir, sync, profile_config, session_start_hook, backup)
 
         # Patch attribution settings and the SessionStart hook into profile's settings.json
         patch_settings_json(profile_name, profile_dir, profile_config, session_start_hook)
@@ -819,5 +809,8 @@ def install(config_arg: Path | None, sync: bool, force: bool) -> None:
     print("\nCleanup:")
     cleanup_stale_scripts(bin_dir, active_script_names)
     cleanup_legacy_commands(bin_dir)
+
+    if any(backup.directory is not None for backup in backups):
+        print(f"\nBackups of replaced files are in <profile>/{BACKUPS_DIR_NAME}/. cc-auth-switch never deletes them; remove them with rm when you no longer need them.")
 
     print("\nDone.")

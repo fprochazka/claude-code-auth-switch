@@ -63,9 +63,19 @@ def run_management_command(argv: list[str]) -> int:
         help="Record the profile of a starting session (run by the SessionStart hook)",
     )
 
-    args = parser.parse_args(argv)
-    if args.command == "install":
-        from claude_code_auth_switch import installer
+    rollback_parser = commands.add_parser(
+        "rollback-sessions",
+        help="Give a profile back its own sessions/ directory after share_sessions",
+        description="Replace the profile's sessions/ symlink with a real directory and move the records of its live sessions back into it.",
+    )
+    add_config_argument(rollback_parser)
+    rollback_parser.add_argument("profile", help="Profile name from the config")
 
+    args = parser.parse_args(argv)
+    from claude_code_auth_switch import installer
+
+    if args.command == "install":
         installer.install(args.config, args.sync, args.force)
+    elif args.command == "rollback-sessions":
+        installer.rollback_sessions(args.config, args.profile)
     return 0

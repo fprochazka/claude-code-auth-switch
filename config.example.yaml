@@ -35,6 +35,10 @@ profiles:
     # Turn single plugins on (true) or off (false) for this profile on top of that.
     plugins:
       notes@personal-marketplace: false
+    # Share sessions/ with ~/.claude/sessions, so that sessions of this profile, of other sharing
+    # profiles and of plain `claude` can list and message each other. The accounts are then no longer
+    # isolated from each other. Off by default; undo with `cc-auth-switch rollback-sessions work-team`.
+    share_sessions: false
     attribution:
       commit: "🤖 Generated with Claude Code\n\nCo-Authored-By: Claude <noreply@anthropic.com>"
       pr: "🤖 Generated with [Claude Code](https://claude.ai/code)"

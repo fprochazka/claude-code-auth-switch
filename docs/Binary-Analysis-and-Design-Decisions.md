@@ -164,6 +164,32 @@ Checked on 2026-11-16 against Claude Code 2.1.325, by reading the binary and by 
 
 The installer registers one hook group per profile, `cc-auth-switch session-start`, recognizes its own entry by the command, and leaves every other `SessionStart` entry alone. The hook is a subcommand of the one console script. The command imports only the hook module, not yaml or the installer, because it runs on every session start. The hook writes a single `O_APPEND` line into `<session-id>/auth-switch-profile-starts.jsonl` and creates the directory first. It prints nothing, exits 0 and logs errors to a file. A session that quits before its first prompt leaves a directory that holds only this log. We accept that leak.
 
+## 7. Sharing `sessions/` between profiles
+
+Checked on 2026-11-16 against Claude Code 2.1.325, by reading the binary, by sampling the `sessions/` directories of live sessions for 12 minutes, and with scratch config directories that were not logged in.
+
+### What we found
+
+- Discovery for `ListAgents` and `SendMessage` by name reads only `$CLAUDE_CONFIG_DIR/sessions/<pid>.json`. Each call runs a fresh `readdir`. There is no watcher, no cache and no heartbeat. The message sockets already share `$XDG_RUNTIME_DIR/cc-socks/` across profiles.
+- A symlinked `sessions/` works: `mkdir -p` and `chmod 0700` go through the symlink without replacing it. Symlinked files inside the directory are skipped.
+- A record carries nothing about the profile. A session rewrites its record in place with `writeFile`, and only when its status, name, session or working directory changes. An idle session never rewrites it. In the sample, no record of 34 live sessions changed in 12 minutes.
+- The key file `<pid>.<hash>.key` is written with a temp file and a rename, once per session start.
+- On Linux an inbox accepts a message without a valid auth line, so a raw `uds:` send across profiles works even without sharing.
+- Session names are unique among the live records of one `sessions/` directory. A later session with a taken name gets `<name>-<adjective>-<noun>`.
+- While `sessions/.fleetview-heartbeat` is younger than 5 seconds, every session that registers there also writes its state classification.
+
+### Design decision
+
+The flag is per profile and off by default, because sharing removes the isolation between accounts. The target is `~/.claude/sessions`, the directory of plain `claude`.
+
+The migration copies the files, swaps the directory and the symlink atomically, and keeps the old directory as a backup. After a pause, it copies files that are newer in the backup. A prototype with simulated writers compared this with hard links. Hard links lost up to 160 of 200 writes of the temp-and-rename writer: the backup shares inodes with the live files, so an "inode differs" check cannot tell which side is newer, and stale data overwrote newer files. The copy variant lost none of the in-place writes and 2 of 200 writes of a temp-and-rename writer in a tight loop. Claude Code writes its key file only once per start, so that case does not apply.
+
+The rollback takes the owner of a record from the profile start log of [section 6](#6-a-sessionstart-hook-that-records-the-profile), then from `/proc/<pid>/environ`, then from the migration backups.
+
+### Not verified
+
+The migration and the rollback ran only against simulated writers, not against live Claude Code sessions. The `renamex_np(RENAME_SWAP)` branch for macOS follows the documented API and has not run on a Mac.
+
 ## Summary of design decisions
 
 | Decision | Rationale |
@@ -177,4 +203,5 @@ The installer registers one hook group per profile, `cc-auth-switch session-star
 | No Machine ID spoofing | Three different auth backends, not three competing subscriptions |
 | Wrapper scripts with `exec claude` | Simple, debuggable, no runtime overhead |
 | Installer with `--sync` | Idempotent by default, force-refresh when needed |
+| `share_sessions` symlinks `sessions/` to `~/.claude/sessions`, migrated by copy and atomic swap | Discovery reads only `sessions/`; copying keeps a backup whose files never change under the live sessions |
 | `SessionStart` hook writes the profile into the session directory | Claude Code's own session files carry no profile; the hook gets the wrapper's environment and the transcript path |

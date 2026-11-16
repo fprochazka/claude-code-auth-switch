@@ -1,4 +1,5 @@
 import json
+import subprocess
 import os
 from pathlib import Path
 
@@ -57,3 +58,17 @@ def test_install_and_force_sync_leave_an_unlisted_directory_alone(sandbox, forei
 
     assert snapshot(other) == before
     assert (sandbox.home / "profiles" / "work-team" / ".auth-switch-backups").is_dir()
+
+
+def test_sharing_and_rolling_back_another_profile_leaves_an_unlisted_directory_alone(sandbox, foreign):
+    config, other = foreign
+    sandbox.mkdir("profiles/work-team/sessions")
+    (sandbox.home / "profiles" / "work-team" / "sessions" / "100.json").write_text('{"pid": 100}\n')
+    sharing = sandbox.write("sharing.yaml", Path(config).read_text().replace("  work-team: {}\n", "  work-team:\n    share_sessions: true\n"))
+    before = snapshot(other)
+
+    sandbox.run_install("--config", str(sharing))
+    assert (sandbox.home / "profiles" / "work-team" / "sessions").is_symlink()
+    subprocess.run(["cc-auth-switch", "rollback-sessions", "--config", config, "work-team"], env=sandbox.env, check=True, capture_output=True)
+
+    assert snapshot(other) == before

@@ -143,7 +143,7 @@ This works because each profile has its own `CLAUDE_CONFIG_DIR` (no credential c
 
 ### Session names in tmux
 
-Inside tmux, the wrapper names a new session after the tmux session and pane: `--name "<tmux session>-p<pane number>"`, for example `api-service-p12` for pane `%12`. Other sessions can then address it by that name with `SendMessage`.
+Inside tmux, the wrapper names a new session after the tmux session and pane: `--name "<tmux session>-p<pane number>"`, for example `api-service-p12` for pane `%12`. Other sessions can then address it by that name with `SendMessage`, which is useful together with [shared sessions](#sharing-sessions-between-profiles).
 
 The wrapper adds no name when you pass `-n`/`--name` yourself, and none when you resume or continue a session (`-r`/`--resume`, `-c`/`--continue`, `--session-id`, `--fork-session`, `--from-pr`). A name given at launch replaces the saved title of a resumed session, including one set with `/rename`. When `tmux display-message` fails, the session starts without a name. Subcommands such as `claude-work-team mcp list` never get a name, because they reject the option.
 
@@ -274,6 +274,42 @@ Claude Code puts the stdout of a `SessionStart` hook into the model context, so 
 
 Claude Code deletes the session directory, and the log with it, when it cleans up old transcripts. A session quit before its first prompt has no transcript, and the cleanup leaves its directory behind, because it does not delete files it does not know.
 
+### Sharing sessions between profiles
+
+Claude Code finds other local sessions, for `ListAgents` and for `SendMessage` by name, only in `sessions/` of its own config directory. Sessions of different profiles therefore cannot see each other. Set `share_sessions: true` on a profile to point its `sessions/` at `~/.claude/sessions`, the directory of plain `claude`. Every sharing profile, and plain `claude`, then sees the sessions of all the others. The flag is off by default.
+
+```yaml
+profiles:
+  work-team:
+    share_sessions: true
+```
+
+What sharing exposes:
+
+- **The accounts are no longer isolated from each other.** A session of one profile can list the sessions of another and send them messages. The receiving session acts on such a message with its own account. On Linux, the message socket does not check the sender at all, so sharing changes discovery, not who can deliver a message.
+- **Session names become machine-wide.** Claude Code keeps names unique among the live sessions of one `sessions/` directory. A second session with a taken name gets a suffix, also across profiles.
+- **FleetView affects every sharing profile.** While FleetView watches the directory, every session that writes its record there also writes its state classification. One heartbeat file turns that on for all sharing profiles at once.
+
+The installer migrates a profile whose `sessions/` is a real directory while its sessions run:
+
+1. It copies every file into `~/.claude/sessions`, keeping the modification time, and keeps a newer copy that is already there.
+2. It swaps the directory for the symlink in one system call: `renameat2(RENAME_EXCHANGE)` on Linux and `renamex_np(RENAME_SWAP)` on macOS. Where neither works, it renames twice in a row.
+3. It keeps the old directory as `sessions.bak-<timestamp>` in the profile directory.
+4. After 1.5 seconds it copies the files that are newer in the backup, for writes that reached the old directory just before the swap. It repeats this once and warns when the second pass still finds something.
+5. It prints the backup path and the rollback command.
+
+A profile whose `sessions/` already points at `~/.claude/sessions` is left alone. A `sessions/` symlink to anywhere else is skipped with a warning. A leftover `sessions.swap` from an interrupted run stops the installer, unless it is a symlink to `~/.claude/sessions`.
+
+To undo the sharing, set `share_sessions: false` and run:
+
+```bash
+cc-auth-switch rollback-sessions work-team
+```
+
+The rollback replaces the symlink with a real directory and moves back the records of the profile's live sessions. It finds the owner of a record in the [profile start log](#profile-start-log), then in `/proc/<pid>/environ` on Linux, then in the migration backups. It deletes the records of ended sessions that belong to the profile and leaves everything else in `~/.claude/sessions`. Turning the flag off does not roll back by itself: the installer only warns that `sessions/` is still shared.
+
+The migration and the rollback were tested with simulated writers in a scratch directory, not yet under real Claude Code sessions. The macOS `renamex_np` branch has not run on a Mac. Keep the backup until you have checked that every session still lists and receives messages, then delete it by hand.
+
 ## Configuration reference
 
 ### `auth-switch.yaml`
@@ -296,6 +332,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | `profiles.<name>.attribution.sessionUrl` | | Boolean. Keeps (`true`) or drops (`false`) the `Claude-Session: <url>` trailer that web/Remote Control sessions add to commits and PRs. Independent of `commit`/`pr`; omit to keep Claude Code's default. Set `false` to avoid leaking session links into public repo history. |
 | `profiles.<name>.plansDirectory` | | Path written to the profile's `settings.json` as `plansDirectory`. `~` is expanded at install time. |
 | `profiles.<name>.plugins` | `{}` | Map of `"<plugin>@<marketplace>"` to `true` or `false`, applied on top of the `enabledPlugins` copied from `source_dir`. See [Plugins](#plugins). |
+| `profiles.<name>.share_sessions` | `false` | Boolean. Point the profile's `sessions/` at `~/.claude/sessions`, so that its sessions and those of other sharing profiles and plain `claude` can list and message each other. See [Sharing sessions between profiles](#sharing-sessions-between-profiles). |
 
 ### `auth-switch.secrets.yaml`
 
@@ -311,6 +348,12 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | `--sync` | Re-copy mutable files from source. If a profile file has diverged (contains changes not in source), shows a diff and exits — prompting you to merge first |
 | `--sync --force` | Force overwrite of diverged profile files without prompting. Each replaced file is backed up first and kept until you delete it, as with every file that an install changes, see [Re-syncing after config changes](#re-syncing-after-config-changes) |
 
+### `cc-auth-switch rollback-sessions <profile>`
+
+| Flag | Description |
+|------|-------------|
+| `--config PATH` | Config file path, as for `install` |
+
 ### Shared file handling
 
 | Type | Files | Behavior |
@@ -321,6 +364,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | **Per launch** | `--settings` (`attribution`) | Read from git config for the start directory every time a wrapper starts Claude. Never written to disk. See [Attribution from git config](#attribution-from-git-config). |
 | **Synced on every install** | `settings.json` (`enabledPlugins`, `extraKnownMarketplaces`) | Copied whole from `source_dir`'s `settings.json`, then the profile's `plugins:` overrides are applied. See [Plugins](#plugins). |
 | **Selectively synced** | `.claude.json` (`mcpServers`) | Only the `mcpServers` key is synced from `~/.claude.json` on every install. Other keys in `.claude.json` are per-profile state. |
+| **Shared on request** | `sessions/` | A real per-profile directory by default. With `share_sessions: true`, a symlink to `~/.claude/sessions`. |
 | **Per-profile** | `.credentials.json`, `.claude.json`, `teams/`, `history.jsonl` | Created automatically by Claude Code on first use. |
 
 ## Re-syncing after config changes

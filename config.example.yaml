@@ -31,6 +31,10 @@ profiles:
     add_dirs:
       - ~/devel/projects/company
     plansDirectory: ~/.claude-profiles/work-team/plans
+    # enabledPlugins and extraKnownMarketplaces are copied from ~/.claude/settings.json on every install.
+    # Turn single plugins on (true) or off (false) for this profile on top of that.
+    plugins:
+      notes@personal-marketplace: false
     attribution:
       commit: "🤖 Generated with Claude Code\n\nCo-Authored-By: Claude <noreply@anthropic.com>"
       pr: "🤖 Generated with [Claude Code](https://claude.ai/code)"

@@ -229,6 +229,24 @@ Subcommands such as `claude-personal mcp list` do not get the setting. If you pa
 
 If `cc-auth-switch` is missing or the command fails, the wrapper prints a one-line warning and starts Claude without the git config attribution.
 
+### Plugins
+
+`plugins/` is a symlink to `~/.claude/plugins`, so the installed plugins and the known marketplaces are shared by all profiles. Claude Code loads a plugin only when `enabledPlugins` in the profile's own `settings.json` sets it to `true`. Every `cc-auth-switch install`, with or without `--sync`, therefore copies `enabledPlugins` and `extraKnownMarketplaces` whole from `source_dir`'s `settings.json` into each profile. A key that the source does not have is removed from the profiles.
+
+To turn plugins on or off in one profile, list them under `plugins:`. The installer applies these entries on top of the copied `enabledPlugins`:
+
+```yaml
+profiles:
+  personal:
+    plugins:
+      company-tools@company-marketplace: false
+      notes@personal-marketplace: true
+```
+
+A key is `<plugin>@<marketplace>` and a value is `true` or `false`; anything else stops the install. When an entry enables a plugin whose marketplace is neither in `extraKnownMarketplaces` nor in `plugins/known_marketplaces.json`, the installer warns, because Claude Code cannot install that plugin.
+
+A `/plugin enable` or `/plugin disable` inside one profile writes only that profile's `settings.json`, and the next install resets it. Put the change into `plugins:` to keep it.
+
 ### Profile start log
 
 Claude Code records nothing about the profile in a session's files. To let other tools tell which profile started or resumed a session, the installer registers `cc-auth-switch session-start` as a `SessionStart` hook in every profile's `settings.json`. It never adds the hook to `source_dir`'s `settings.json`. It replaces its own entry, also the `claude-auth-switch-session-start` entry of an earlier version, and keeps all other `SessionStart` hooks, because Claude Code runs every hook from every settings source. `--sync` does not report the hook as a divergence.
@@ -260,7 +278,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 |-------|---------|-------------|
 | `source_dir` | `~/.claude` | Directory to copy/symlink shared config from |
 | `bin_dir` | `~/.local/bin` | Where to install the wrapper scripts |
-| `profiles_dir` | `~/.claude-profiles` | Where to create the per-profile config directories. `~` is expanded. |
+| `profiles_dir` | `~/.claude-profiles` | Where to create the per-profile config directories. `~` is expanded. | Only the profiles listed in the config are managed: the installer never reads for writing, changes or deletes anything in another directory under `profiles_dir`.
 | `profiles.<name>.description` | `""` | Human-readable profile description |
 | `profiles.<name>.model` | | Default model to use (e.g., `sonnet`, `opus`). Overridden by `--model` on the command line. |
 | `profiles.<name>.pinned_models` | `{}` | Map of model class (`sonnet`, `opus`, `haiku`, `fable`) to a specific version id. Emitted as `ANTHROPIC_DEFAULT_<CLASS>_MODEL` env vars in the wrapper. See [Pinned model versions](#pinned-model-versions). |
@@ -271,6 +289,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | `profiles.<name>.attribution.pr` | | Attribution text appended to pull request descriptions |
 | `profiles.<name>.attribution.sessionUrl` | | Boolean. Keeps (`true`) or drops (`false`) the `Claude-Session: <url>` trailer that web/Remote Control sessions add to commits and PRs. Independent of `commit`/`pr`; omit to keep Claude Code's default. Set `false` to avoid leaking session links into public repo history. |
 | `profiles.<name>.plansDirectory` | | Path written to the profile's `settings.json` as `plansDirectory`. `~` is expanded at install time. |
+| `profiles.<name>.plugins` | `{}` | Map of `"<plugin>@<marketplace>"` to `true` or `false`, applied on top of the `enabledPlugins` copied from `source_dir`. See [Plugins](#plugins). |
 
 ### `auth-switch.secrets.yaml`
 
@@ -294,6 +313,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | **Symlinked** | `commands/`, `skills/`, `agents/`, `plugins/`, `projects/`, `scripts/` | Always symlinked. Changes are shared across all profiles. |
 | **Patched** | `settings.json` (`attribution`, `plansDirectory`, `hooks.SessionStart`) | Set from profile config on every install. The installer creates the file when `source_dir` has none. See [Profile start log](#profile-start-log) for the hook. |
 | **Per launch** | `--settings` (`attribution`) | Read from git config for the start directory every time a wrapper starts Claude. Never written to disk. See [Attribution from git config](#attribution-from-git-config). |
+| **Synced on every install** | `settings.json` (`enabledPlugins`, `extraKnownMarketplaces`) | Copied whole from `source_dir`'s `settings.json`, then the profile's `plugins:` overrides are applied. See [Plugins](#plugins). |
 | **Selectively synced** | `.claude.json` (`mcpServers`) | Only the `mcpServers` key is synced from `~/.claude.json` on every install. Other keys in `.claude.json` are per-profile state. |
 | **Per-profile** | `.credentials.json`, `.claude.json`, `teams/`, `history.jsonl` | Created automatically by Claude Code on first use. |
 

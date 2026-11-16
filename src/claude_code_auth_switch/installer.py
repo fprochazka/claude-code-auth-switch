@@ -6,6 +6,7 @@ with shared configuration, then installs wrapper scripts to bin_dir.
 """
 
 import copy
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import os
@@ -67,6 +68,9 @@ SYMLINK_DIRS = [
     "projects",
     "scripts",
 ]
+
+# Settings keys that mirror the shared plugins/ directory, copied from source_dir on every install.
+PLUGIN_SETTINGS_KEYS = ("enabledPlugins", "extraKnownMarketplaces")
 
 # Profile files that --sync replaces are kept below the profile root. The tool never deletes them.
 BACKUPS_DIR_NAME = ".auth-switch-backups"
@@ -289,13 +293,68 @@ class ProfileBackup:
         print(f"  backed up {path.name} to {target}")
 
 
-def expected_copy(source_dir: Path, filename: str, profile_config: dict, session_start_hook: str | None) -> bytes:
+def expected_copy(source_dir: Path, filename: str, profile_config: dict, shared: SharedPatches | None) -> bytes:
     """Content that a profile file has right after a sync, patches included."""
     if filename == "settings.json":
-        expected = build_expected_settings(source_dir / filename, profile_config, session_start_hook)
+        expected = build_expected_settings(source_dir / filename, profile_config, shared)
         if expected is not None:
             return expected.encode()
     return (source_dir / filename).read_bytes()
+
+
+def read_source_plugin_keys(source_dir: Path) -> dict | None:
+    """Read enabledPlugins and extraKnownMarketplaces from source_dir's settings.json.
+
+    A missing file means no plugins, so the profiles lose the keys too. An unreadable file returns
+    None, so a broken source never wipes the profiles' plugin settings.
+    """
+    path = source_dir / "settings.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return {key: data[key] for key in PLUGIN_SETTINGS_KEYS if key in data}
+
+
+def check_plugin_overrides(profile_name: str, profile_config: dict, source_dir: Path, source_plugin_keys: dict | None) -> None:
+    """Validate profiles.<name>.plugins, and warn about enabled plugins that Claude Code cannot install."""
+    overrides = profile_config.get("plugins")
+    if overrides is None:
+        return
+    if not isinstance(overrides, dict):
+        print(f"Error: Profile '{profile_name}' has plugins: {overrides!r}, expected a map of \"<plugin>@<marketplace>\" to true or false", file=sys.stderr)
+        sys.exit(1)
+    for plugin_id, enabled in overrides.items():
+        parts = plugin_id.split("@") if isinstance(plugin_id, str) else []
+        if len(parts) != 2 or not all(parts):
+            print(f"Error: Profile '{profile_name}' has plugins key {plugin_id!r}, expected \"<plugin>@<marketplace>\"", file=sys.stderr)
+            sys.exit(1)
+        if not isinstance(enabled, bool):
+            print(f"Error: Profile '{profile_name}' has plugins value {enabled!r} for '{plugin_id}', expected true or false", file=sys.stderr)
+            sys.exit(1)
+
+    known = set()
+    declared = (source_plugin_keys or {}).get("extraKnownMarketplaces")
+    if isinstance(declared, dict):
+        known |= set(declared)
+    try:
+        installed = json.loads((source_dir / "plugins" / "known_marketplaces.json").read_text())
+        if isinstance(installed, dict):
+            known |= set(installed)
+    except (OSError, json.JSONDecodeError):
+        pass
+    for plugin_id, enabled in overrides.items():
+        marketplace = plugin_id.split("@")[1]
+        if enabled and marketplace not in known:
+            print(
+                f"Warning: Profile '{profile_name}' enables {plugin_id}, but the marketplace '{marketplace}' is neither in "
+                f"extraKnownMarketplaces of {source_dir / 'settings.json'} nor in plugins/known_marketplaces.json, so Claude Code cannot install it",
+                file=sys.stderr,
+            )
 
 
 def setup_profile_dir(
@@ -304,7 +363,7 @@ def setup_profile_dir(
     source_dir: Path,
     force_sync: bool,
     profile_config: dict | None = None,
-    session_start_hook: str | None = None,
+    shared: SharedPatches | None = None,
     backup: ProfileBackup | None = None,
 ) -> None:
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -320,7 +379,7 @@ def setup_profile_dir(
         if dst.exists() and not force_sync:
             continue
         if dst.exists():
-            if dst.read_bytes() == expected_copy(source_dir, filename, profile_config, session_start_hook):
+            if dst.read_bytes() == expected_copy(source_dir, filename, profile_config, shared):
                 continue
             if backup is not None:
                 backup.save(dst)
@@ -439,23 +498,53 @@ def merge_session_start_hook(data: dict, hook_command: str) -> None:
     data["hooks"] = {**hooks, "SessionStart": kept}
 
 
-def apply_profile_patches(data: dict, profile_config: dict, session_start_hook: str | None) -> None:
+@dataclass(frozen=True)
+class SharedPatches:
+    """Inputs of the settings.json patches that are the same for every profile of one install run."""
+
+    session_start_hook: str | None = None
+    # enabledPlugins and extraKnownMarketplaces of source_dir's settings.json; a key absent there is
+    # absent here. None when that file cannot be read, which leaves the profiles' keys alone.
+    source_plugin_keys: dict | None = None
+
+
+def apply_plugin_keys(data: dict, profile_config: dict, source_plugin_keys: dict) -> None:
+    """Copy the two plugin keys whole from source_dir's settings.json, then apply the profile's overrides.
+
+    plugins/ is shared through a symlink, so what is installed is global, but Claude Code loads a
+    plugin only when enabledPlugins in the profile's own settings.json says true.
+    """
+    for key in PLUGIN_SETTINGS_KEYS:
+        if key in source_plugin_keys:
+            data[key] = copy.deepcopy(source_plugin_keys[key])
+        else:
+            data.pop(key, None)
+    overrides = profile_config.get("plugins") or {}
+    if overrides:
+        enabled = data.get("enabledPlugins")
+        data["enabledPlugins"] = {**(enabled if isinstance(enabled, dict) else {}), **overrides}
+
+
+def apply_profile_patches(data: dict, profile_config: dict, shared: SharedPatches | None) -> None:
     """Apply the config-driven changes of a profile's settings.json, shared by the install and the divergence check."""
+    shared = shared or SharedPatches()
     if (attribution := profile_config.get("attribution")) is not None:
         data["attribution"] = attribution
     if (plans_directory := profile_config.get("plansDirectory")) is not None:
         data["plansDirectory"] = os.path.expanduser(plans_directory)
     elif isinstance(existing := data.get("plansDirectory"), str):
         data["plansDirectory"] = os.path.expanduser(existing)
-    if session_start_hook is not None:
-        merge_session_start_hook(data, session_start_hook)
+    if shared.source_plugin_keys is not None:
+        apply_plugin_keys(data, profile_config, shared.source_plugin_keys)
+    if shared.session_start_hook is not None:
+        merge_session_start_hook(data, shared.session_start_hook)
 
 
 def patch_settings_json(
     profile_name: str,
     profile_dir: Path,
     profile_config: dict,
-    session_start_hook: str | None = None,
+    shared: SharedPatches | None = None,
 ) -> None:
     """Patch per-profile settings (attribution, plansDirectory, the SessionStart hook) into settings.json."""
     settings_path = profile_dir / "settings.json"
@@ -469,7 +558,7 @@ def patch_settings_json(
         return
 
     original = copy.deepcopy(data)
-    apply_profile_patches(data, profile_config, session_start_hook)
+    apply_profile_patches(data, profile_config, shared)
 
     if data == original:
         return
@@ -646,7 +735,7 @@ def cleanup_stale_scripts(bin_dir: Path, active_script_names: set[str]) -> None:
             print(f"  removed stale script {entry}")
 
 
-def build_expected_settings(source_path: Path, profile_config: dict, session_start_hook: str | None = None) -> str | None:
+def build_expected_settings(source_path: Path, profile_config: dict, shared: SharedPatches | None = None) -> str | None:
     """Build what a profile's settings.json should look like after patching.
 
     Applies config-driven patches (like attribution) to the source content,
@@ -662,7 +751,7 @@ def build_expected_settings(source_path: Path, profile_config: dict, session_sta
 
     if not isinstance(data, dict):
         return None
-    apply_profile_patches(data, profile_config, session_start_hook)
+    apply_profile_patches(data, profile_config, shared)
 
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
@@ -671,7 +760,7 @@ def collect_diverged_files(
     config: dict,
     profiles_base: Path,
     source_dir: Path,
-    session_start_hook: str | None = None,
+    shared: SharedPatches | None = None,
 ) -> list[tuple[str, str, str]]:
     """Check all profile copy files for divergence from source.
 
@@ -692,7 +781,7 @@ def collect_diverged_files(
                 continue
 
             if filename == "settings.json":
-                expected = build_expected_settings(src, profile_config, session_start_hook)
+                expected = build_expected_settings(src, profile_config, shared)
                 if expected is None:
                     continue
                 src_lines = expected.splitlines(keepends=True)
@@ -745,10 +834,14 @@ def install(config_arg: Path | None, sync: bool, force: bool) -> None:
 
     attribution_helper = resolve_command(TOOL_COMMAND_NAME)
     session_start_hook = f"{shlex.quote(str(attribution_helper))} {SESSION_START_SUBCOMMAND}"
+    source_plugin_keys = read_source_plugin_keys(source_dir)
+    for profile_name, profile_config in config["profiles"].items():
+        check_plugin_overrides(profile_name, profile_config or {}, source_dir, source_plugin_keys)
+    shared = SharedPatches(session_start_hook, source_plugin_keys)
 
     # When --sync is used without --force, check for diverged files first
     if sync and not force:
-        diverged = collect_diverged_files(config, profiles_base, source_dir, session_start_hook)
+        diverged = collect_diverged_files(config, profiles_base, source_dir, shared)
         if diverged:
             print("\nDiverged profile files detected:\n")
             for profile_name, filename, diff_text in diverged:
@@ -791,10 +884,10 @@ def install(config_arg: Path | None, sync: bool, force: bool) -> None:
         # Setup profile directory with copies and symlinks
         backup = ProfileBackup(profile_dir, backup_stamp)
         backups.append(backup)
-        setup_profile_dir(profile_name, profile_dir, source_dir, sync, profile_config, session_start_hook, backup)
+        setup_profile_dir(profile_name, profile_dir, source_dir, sync, profile_config, shared, backup)
 
         # Patch attribution settings and the SessionStart hook into profile's settings.json
-        patch_settings_json(profile_name, profile_dir, profile_config, session_start_hook)
+        patch_settings_json(profile_name, profile_dir, profile_config, shared)
 
         # Sync mcpServers from global ~/.claude.json
         sync_mcp_servers(profile_name, profile_dir, source_claude_json_path)

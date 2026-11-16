@@ -6,6 +6,7 @@ with shared configuration, then installs wrapper scripts to bin_dir.
 """
 
 import copy
+from datetime import datetime, timezone
 import json
 import os
 import difflib
@@ -66,6 +67,10 @@ SYMLINK_DIRS = [
     "projects",
     "scripts",
 ]
+
+# Profile files that --sync replaces are kept below the profile root, the newest KEEP_BACKUPS runs per profile.
+BACKUPS_DIR_NAME = ".auth-switch-backups"
+KEEP_BACKUPS = 20
 
 DEFAULT_CONFIG_PATH = Path("~/.claude/auth-switch.yaml").expanduser()
 # Kept working so an existing install does not break when ~/.claude/auth-switch.yaml is absent.
@@ -259,15 +264,62 @@ def resolve_command(name: str) -> Path:
     return Path(os.path.abspath(found))
 
 
+class ProfileBackup:
+    """Backups of profile files that --sync replaces, in <profile>/.auth-switch-backups/<UTC timestamp>/.
+
+    The directory is created only when a file is backed up, so a run that changes nothing leaves no
+    trace. It sits below the profile root and keeps the file names, so Claude Code does not load a
+    backed-up CLAUDE.md as instructions.
+    """
+
+    def __init__(self, profile_dir: Path, stamp: str):
+        self.root = profile_dir / BACKUPS_DIR_NAME
+        self.stamp = stamp
+        self.directory: Path | None = None
+
+    def save(self, path: Path) -> None:
+        if self.directory is None:
+            self.directory = self.root / self.stamp
+            counter = 1
+            while self.directory.exists():
+                self.directory = self.root / f"{self.stamp}-{counter}"
+                counter += 1
+            self.directory.mkdir(parents=True)
+        target = self.directory / path.name
+        shutil.copy2(path, target)
+        print(f"  backed up {path.name} to {target}")
+
+    def prune(self) -> None:
+        if self.directory is None:
+            return
+        backups = sorted(entry for entry in self.root.iterdir() if entry.is_dir() and not entry.is_symlink())
+        for old in backups[:-KEEP_BACKUPS]:
+            shutil.rmtree(old)
+
+
+def expected_copy(source_dir: Path, filename: str, profile_config: dict, session_start_hook: str | None) -> bytes:
+    """Content that a profile file has right after a sync, patches included."""
+    if filename == "settings.json":
+        expected = build_expected_settings(source_dir / filename, profile_config, session_start_hook)
+        if expected is not None:
+            return expected.encode()
+    return (source_dir / filename).read_bytes()
+
+
 def setup_profile_dir(
     profile_name: str,
     profile_dir: Path,
     source_dir: Path,
     force_sync: bool,
+    profile_config: dict | None = None,
+    session_start_hook: str | None = None,
+    backup: ProfileBackup | None = None,
 ) -> None:
     profile_dir.mkdir(parents=True, exist_ok=True)
+    profile_config = profile_config or {}
 
-    # Copy mutable files
+    # Copy mutable files. A sync skips files that already hold what it would write, so a regular
+    # unattended sync stays quiet, and backs up the others before replacing them.
     for filename in resolve_copy_files(source_dir):
         src = source_dir / filename
         dst = profile_dir / filename
@@ -275,8 +327,15 @@ def setup_profile_dir(
             continue
         if dst.exists() and not force_sync:
             continue
+        if dst.exists():
+            if dst.read_bytes() == expected_copy(source_dir, filename, profile_config, session_start_hook):
+                continue
+            if backup is not None:
+                backup.save(dst)
         shutil.copy2(str(src), str(dst))
         print(f"  {'synced' if force_sync else 'copied'} {filename}")
+    if backup is not None:
+        backup.prune()
 
     # Create directory symlinks
     for dirname in SYMLINK_DIRS:
@@ -396,6 +455,8 @@ def apply_profile_patches(data: dict, profile_config: dict, session_start_hook: 
         data["attribution"] = attribution
     if (plans_directory := profile_config.get("plansDirectory")) is not None:
         data["plansDirectory"] = os.path.expanduser(plans_directory)
+    elif isinstance(existing := data.get("plansDirectory"), str):
+        data["plansDirectory"] = os.path.expanduser(existing)
     if session_start_hook is not None:
         merge_session_start_hook(data, session_start_hook)
 
@@ -419,8 +480,6 @@ def patch_settings_json(
 
     original = copy.deepcopy(data)
     apply_profile_patches(data, profile_config, session_start_hook)
-    if profile_config.get("plansDirectory") is None and isinstance(existing := data.get("plansDirectory"), str):
-        data["plansDirectory"] = os.path.expanduser(existing)
 
     if data == original:
         return
@@ -713,6 +772,7 @@ def install(config_arg: Path | None, sync: bool, force: bool) -> None:
             sys.exit(0)
 
     source_claude_json_path = Path.home() / ".claude.json"
+    backup_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     active_script_names: set[str] = set()
 
     for profile_name, profile_config in config["profiles"].items():
@@ -738,7 +798,10 @@ def install(config_arg: Path | None, sync: bool, force: bool) -> None:
         print(f"\nProfile: {profile_name}")
 
         # Setup profile directory with copies and symlinks
-        setup_profile_dir(profile_name, profile_dir, source_dir, sync)
+        setup_profile_dir(
+            profile_name, profile_dir, source_dir, sync, profile_config, session_start_hook,
+            ProfileBackup(profile_dir, backup_stamp),
+        )
 
         # Patch attribution settings and the SessionStart hook into profile's settings.json
         patch_settings_json(profile_name, profile_dir, profile_config, session_start_hook)

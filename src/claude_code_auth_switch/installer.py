@@ -5,6 +5,8 @@ Reads ~/.claude/auth-switch.yaml and creates isolated profile directories
 with shared configuration, then installs wrapper scripts to bin_dir.
 """
 
+from __future__ import annotations
+
 import contextlib
 import copy
 from dataclasses import dataclass

@@ -86,7 +86,7 @@ def test_repeated_installs_leave_no_backups_and_no_temp_files(sandbox):
 
     for flags in ([], ["--sync"], ["--sync", "--force"]):
         result = sandbox.run_install("--config", str(config), *flags)
-        assert [line for line in result.stdout.splitlines() if line.startswith("  ")] == []
+        assert [line for line in result.stdout.splitlines() if line.startswith("  ")] == ["  in sync, nothing changed", "  nothing to clean up"]
 
     assert list((profiles / "work-team" / installer.BACKUPS_DIR_NAME).iterdir()) == [first_backup]
     assert leftovers(profiles) == []

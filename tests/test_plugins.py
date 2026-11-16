@@ -120,4 +120,4 @@ def test_sync_does_not_report_synced_plugin_keys_as_divergence(sandbox, plugin_s
     result = sandbox.run_install("--config", config, "--sync")
 
     assert "Diverged" not in result.stdout
-    assert [line for line in result.stdout.splitlines() if line.startswith("  ")] == []
+    assert [line for line in result.stdout.splitlines() if line.startswith("  ")] == ["  in sync, nothing changed", "  in sync, nothing changed", "  nothing to clean up"]

@@ -60,7 +60,7 @@ def test_force_sync_without_changes_is_quiet_and_backs_up_nothing(sandbox, synce
 
     result = sandbox.run_install("--config", config, "--sync", "--force")
 
-    assert detail_lines(result.stdout) == []
+    assert detail_lines(result.stdout) == ["  in sync, nothing changed", "  in sync, nothing changed", "  nothing to clean up"]
     assert "Backups of replaced files" not in result.stdout
     assert not list(profiles.glob(f"*/{BACKUPS}"))
 
@@ -105,3 +105,26 @@ def test_first_install_backs_up_nothing(sandbox, synced):
     config, source_dir, profiles = synced
 
     assert not list(profiles.glob(f"*/{BACKUPS}"))
+
+
+@pytest.mark.parametrize("flags", [[], ["--sync"], ["--sync", "--force"]])
+def test_a_run_without_changes_says_so_per_section(sandbox, synced, flags):
+    config, source_dir, profiles = synced
+
+    result = sandbox.run_install("--config", config, *flags)
+
+    assert result.stdout == (
+        "\nProfile: personal\n  in sync, nothing changed\n"
+        "\nProfile: work-team\n  in sync, nothing changed\n"
+        "\nCleanup:\n  nothing to clean up\n"
+        "\nDone.\n"
+    )
+
+
+def test_a_profile_with_changes_gets_no_in_sync_line(sandbox, synced):
+    config, source_dir, profiles = synced
+    (profiles / "personal" / "CLAUDE.md").unlink()
+
+    result = sandbox.run_install("--config", config)
+
+    assert "\nProfile: personal\n  copied CLAUDE.md\n\nProfile: work-team\n  in sync, nothing changed\n" in result.stdout

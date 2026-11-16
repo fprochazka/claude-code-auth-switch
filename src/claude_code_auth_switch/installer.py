@@ -5,6 +5,7 @@ Reads ~/.claude/auth-switch.yaml and creates isolated profile directories
 with shared configuration, then installs wrapper scripts to bin_dir.
 """
 
+import contextlib
 import copy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -865,6 +866,31 @@ def collect_diverged_files(
     return diverged
 
 
+class SectionOutput(contextlib.AbstractContextManager):
+    """Pass stdout through and remember whether a section printed anything, for the "nothing changed" line."""
+
+    def __init__(self) -> None:
+        self.printed = False
+        self._target = sys.stdout
+        self._redirect = contextlib.redirect_stdout(self)
+
+    def write(self, text: str) -> int:
+        if text.strip():
+            self.printed = True
+        return self._target.write(text)
+
+    def flush(self) -> None:
+        self._target.flush()
+
+    def __enter__(self) -> "SectionOutput":
+        self._target = sys.stdout
+        self._redirect.__enter__()
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self._redirect.__exit__(*exc_info)
+
+
 def read_config(config_arg: Path | None) -> tuple[Path, dict]:
     config_path = resolve_config_path(config_arg, DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH)
     if not config_path.exists():
@@ -939,28 +965,33 @@ def install(config_arg: Path | None, sync: bool, force: bool) -> None:
         active_script_names.add(script_name)
 
         print(f"\nProfile: {profile_name}")
+        with SectionOutput() as section:
+            # Setup profile directory with copies and symlinks
+            backup = ProfileBackup(profile_dir, backup_stamp)
+            backups.append(backup)
+            setup_profile_dir(profile_name, profile_dir, source_dir, sync, profile_config, shared, backup)
 
-        # Setup profile directory with copies and symlinks
-        backup = ProfileBackup(profile_dir, backup_stamp)
-        backups.append(backup)
-        setup_profile_dir(profile_name, profile_dir, source_dir, sync, profile_config, shared, backup)
+            # Patch attribution settings and the SessionStart hook into profile's settings.json
+            patch_settings_json(profile_name, profile_dir, profile_config, shared, backup)
 
-        # Patch attribution settings and the SessionStart hook into profile's settings.json
-        patch_settings_json(profile_name, profile_dir, profile_config, shared, backup)
+            # Sync mcpServers from global ~/.claude.json
+            sync_mcp_servers(profile_name, profile_dir, source_claude_json_path, backup)
 
-        # Sync mcpServers from global ~/.claude.json
-        sync_mcp_servers(profile_name, profile_dir, source_claude_json_path, backup)
-
-        # Generate and install wrapper script
-        content = generate_wrapper_script(
-            profile_name, profile_dir, description, env_vars, add_dirs, model, attribution_helper,
-        )
-        install_wrapper_script(script_path, content)
+            # Generate and install wrapper script
+            content = generate_wrapper_script(
+                profile_name, profile_dir, description, env_vars, add_dirs, model, attribution_helper,
+            )
+            install_wrapper_script(script_path, content)
+        if not section.printed:
+            print("  in sync, nothing changed")
 
     # Clean up stale wrapper scripts
     print("\nCleanup:")
-    cleanup_stale_scripts(bin_dir, active_script_names)
-    cleanup_legacy_commands(bin_dir)
+    with SectionOutput() as section:
+        cleanup_stale_scripts(bin_dir, active_script_names)
+        cleanup_legacy_commands(bin_dir)
+    if not section.printed:
+        print("  nothing to clean up")
 
     print("\nDone.")
     if any(backup.directory is not None for backup in backups):

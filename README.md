@@ -18,7 +18,7 @@ Run them in parallel across different project directories without credential col
 
 Claude Code's `CLAUDE_CONFIG_DIR` environment variable redirects all configuration and credential storage to a custom directory. We [verified in the binary](docs/Binary-Analysis-and-Design-Decisions.md) that this provides **full isolation** — including the `~/.claude.json` state file, which contrary to [some reports](docs/Gemini-Symlink-Behavior-Research.md) is **not** hardcoded to the home directory.
 
-The install script reads `~/.claude/auth-switch.yaml`, creates a profile directory per account under `~/.claude-profiles/`, and generates thin wrapper scripts that set the right environment variables before `exec`-ing `claude`:
+The `claude-code-auth-switch install` command reads `~/.claude/auth-switch.yaml`, creates a profile directory per account under `~/.claude-profiles/`, and generates thin wrapper scripts that set the right environment variables before `exec`-ing `claude`:
 
 ```
 ~/.claude/
@@ -50,23 +50,26 @@ The install script reads `~/.claude/auth-switch.yaml`, creates a profile directo
 ## Requirements
 
 - Linux. macOS and WSL are untested, see [macOS and WSL notes](#macos-and-wsl-notes).
-- Python 3.10+ with [PyYAML](https://pypi.org/project/PyYAML/) (`pip install pyyaml`). On macOS, `/usr/bin/python3` from the Xcode Command Line Tools is 3.9 and cannot run `install.py`.
+- [uv](https://docs.astral.sh/uv/). It installs the tool with its own Python 3.10+ and PyYAML, so the system Python does not matter. This includes macOS, where `/usr/bin/python3` is 3.9.
 - Claude Code installed and available as `claude` on your `$PATH`
-- `~/.local/bin` on your `$PATH` (or configure a different `bin_dir`)
+- `~/.local/bin` on your `$PATH`. `uv tool install` puts the tool's commands there, and the wrappers go there unless you configure a different `bin_dir`.
 
 ## Installation
 
-1. **Clone the repo:**
+1. **Install the tool:**
 
    ```bash
-   git clone https://github.com/fprochazka/claude-code-auth-switch.git
-   cd claude-code-auth-switch
+   uv tool install git+https://github.com/fprochazka/claude-code-auth-switch.git
    ```
 
-2. **Create your config:**
+   This puts two commands into `~/.local/bin`: `claude-code-auth-switch`, and the `claude-auth-switch-attribution` helper that the wrappers call by absolute path.
+
+   If you used the older `python3 install.py`, it left a plain copy of `~/.local/bin/claude-auth-switch-attribution`, and `uv tool install` refuses to overwrite it. Add `--force` to the first install to replace it.
+
+2. **Create your config** from [`config.example.yaml`](config.example.yaml):
 
    ```bash
-   cp config.example.yaml ~/.claude/auth-switch.yaml
+   curl -o ~/.claude/auth-switch.yaml https://raw.githubusercontent.com/fprochazka/claude-code-auth-switch/master/config.example.yaml
    ```
 
 3. **Edit `~/.claude/auth-switch.yaml`** with your profiles:
@@ -99,10 +102,10 @@ The install script reads `~/.claude/auth-switch.yaml`, creates a profile directo
          CLOUD_ML_REGION: "europe-west1"
    ```
 
-4. **Run the install script:**
+4. **Create the profiles and wrappers:**
 
    ```bash
-   python3 install.py
+   claude-code-auth-switch install
    ```
 
 5. **Authenticate each profile** (first time only):
@@ -211,7 +214,7 @@ The commit and PR attribution can also come from git config, so it follows the d
     sessionUrl = false
 ```
 
-At launch, every wrapper runs `claude-auth-switch-attribution "$PWD"`, a small Python script that `install.py` installs into `bin_dir`. When the script finds any of the keys, the wrapper passes them as `claude --settings '{"attribution": {...}}'`. The keys are the same as in the profile's `attribution`: `commit` and `pr` are strings, where an empty string turns the attribution off, and `sessionUrl` is a git boolean (`true`/`yes`/`on`/`1`, `false`/`no`/`off`/`0`). An invalid boolean or an unknown key prints a warning and is ignored. A key that is not set stays unset, so Claude Code falls back to the next source for it.
+At launch, every wrapper runs `claude-auth-switch-attribution "$PWD"`, a command of this tool that the wrapper calls by the absolute path it had at install time. When the script finds any of the keys, the wrapper passes them as `claude --settings '{"attribution": {...}}'`. The keys are the same as in the profile's `attribution`: `commit` and `pr` are strings, where an empty string turns the attribution off, and `sessionUrl` is a git boolean (`true`/`yes`/`on`/`1`, `false`/`no`/`off`/`0`). An invalid boolean or an unknown key prints a warning and is ignored. A key that is not set stays unset, so Claude Code falls back to the next source for it.
 
 Which config applies depends on where you start Claude:
 
@@ -235,7 +238,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | Field | Default | Description |
 |-------|---------|-------------|
 | `source_dir` | `~/.claude` | Directory to copy/symlink shared config from |
-| `bin_dir` | `~/.local/bin` | Where to install wrapper scripts and the `claude-auth-switch-attribution` helper |
+| `bin_dir` | `~/.local/bin` | Where to install the wrapper scripts |
 | `profiles_dir` | `~/.claude-profiles` | Where to create the per-profile config directories. `~` is expanded. |
 | `profiles.<name>.description` | `""` | Human-readable profile description |
 | `profiles.<name>.model` | | Default model to use (e.g., `sonnet`, `opus`). Overridden by `--model` on the command line. |
@@ -254,7 +257,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 |-------|---------|-------------|
 | `profiles.<name>.env` | `{}` | Secret environment variables, merged into the profile's `env`. The only key this file accepts. See [Secrets](#secrets). |
 
-### `install.py`
+### `claude-code-auth-switch install`
 
 | Flag | Description |
 |------|-------------|
@@ -278,17 +281,17 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 ```bash
 # Edited ~/.claude/auth-switch.yaml or ~/.claude/auth-switch.secrets.yaml → re-run install
 # (also syncs mcpServers from ~/.claude.json into each profile)
-python3 install.py
+claude-code-auth-switch install
 
 # Changed ~/.claude/settings.json and want profiles to pick it up
 # (will show a diff and stop if any profile file has diverged)
-python3 install.py --sync
+claude-code-auth-switch install --sync
 
 # Force overwrite even if profile files have diverged
-python3 install.py --sync --force
+claude-code-auth-switch install --sync --force
 ```
 
-The install script is idempotent:
+The installer is idempotent:
 - Existing profile directories are never deleted
 - Existing copied files are not overwritten (unless `--sync`)
 - `--sync` detects diverged files (profile has changes not in source) and shows a diff before overwriting
@@ -325,7 +328,7 @@ security find-generic-password -s "Claude Code-credentials-$hash" -a "$USER"
 
 Gotchas:
 
-- **The hash covers the exact string.** Claude Code does not expand `~`, strip a trailing slash or resolve symlinks before hashing. If you move `profiles_dir`, or point it at the same directory through a different path, every profile reads as logged out and the old Keychain entries stay behind. `install.py` writes the expanded absolute path, so re-running it with the same config keeps the same entries.
+- **The hash covers the exact string.** Claude Code does not expand `~`, strip a trailing slash or resolve symlinks before hashing. If you move `profiles_dir`, or point it at the same directory through a different path, every profile reads as logged out and the old Keychain entries stay behind. The installer writes the expanded absolute path, so re-running it with the same config keeps the same entries.
 - **Never export `CLAUDE_CONFIG_DIR=~/.claude`.** The explicit default path produces a hashed name, not the plain `Claude Code-credentials` entry that your existing login uses, so plain `claude` reads as logged out. The wrappers unset every inherited `CLAUDE_*` variable, so they are not affected. [cenv](https://github.com/lukabudik/cenv) documents the same gotcha.
 - **A login in `~/.claude` does not carry over.** Log in once in every profile, as on Linux.
 - **Re-login after a reboot.** One user in issue #20553 reported that macOS blocked reads of the per-directory entries after a restart, because of the entry's access control list. The binary reads the Keychain by running the `security` command (`/usr/bin/security`), which that list allows, so this may not apply. Nobody has checked.
@@ -367,7 +370,7 @@ fi
 
 - **Tested on Linux only.** macOS and WSL should work based on the binary, but nobody has tested them. See [macOS and WSL notes](#macos-and-wsl-notes).
 - **Same-directory parallel execution** is not supported. Two profiles in the same project directory will fight over `.claude/history.jsonl.lock`. Use [git worktrees](https://git-scm.com/docs/git-worktree) if you need this.
-- **Copied files can diverge.** When Claude Code modifies `settings.json` in a profile (e.g., accepting a permission), the change is local to that profile. Run `install.py --sync` to reset from source.
+- **Copied files can diverge.** When Claude Code modifies `settings.json` in a profile (e.g., accepting a permission), the change is local to that profile. Run `claude-code-auth-switch install --sync` to reset from source.
 
 ## Documentation
 
@@ -388,15 +391,15 @@ git config hooks.forbiddenPatternsFile ~/.config/git/forbidden-patterns.txt  # a
 
 The file holds one extended regex per line, matched case-insensitively. Blank lines and `#` comments are ignored. Until `hooks.forbiddenPatternsFile` points at a file with at least one pattern, both hooks refuse every commit and print how to fix it. The hooks use `mapfile`, so they need bash 4 or newer. Docs and examples use placeholder names such as `<your-project-id>` and `~/devel/projects/company`.
 
-## Development
+### Tests
 
 The tests use real git with a throwaway home directory and never touch your own config. Run them with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv run --no-project --with pyyaml --with pytest pytest tests/
+uv run pytest
 ```
 
-Or with `python3 -m pytest tests/` in an environment that has `pyyaml` and `pytest` installed.
+`uv run` installs the package into the project environment, so the tests find its commands on `PATH`. To try a local checkout as the installed tool, run `uv tool install --force --editable .`.
 
 ## License
 

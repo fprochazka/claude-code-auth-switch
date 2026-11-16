@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
 """
 Print the Claude Code attribution settings that the user's git config sets for a directory.
 
-install.py copies this file into bin_dir as claude-auth-switch-attribution, and every generated
-wrapper runs it at launch. The output is either empty or a JSON object for `claude --settings`:
+The package installs this module as the claude-auth-switch-attribution command, and every
+generated wrapper runs it by absolute path at launch. The output is either empty or a JSON object
+for `claude --settings`:
 
     {"attribution": {"commit": "...", "pr": "...", "sessionUrl": true}}
 
@@ -12,7 +12,7 @@ every include and includeIf itself. Outside a repository git skips all gitdir: c
 script evaluates the plain-prefix ones (gitdir:~/devel/projects/company/) from the global config.
 
 The script never stops a launch: on any error it prints a message to stderr, prints nothing to
-stdout and exits 0. It runs under the system python3, so it stays compatible with Python 3.9.
+stdout and exits 0.
 """
 
 from __future__ import annotations
@@ -201,7 +201,9 @@ def settings_for(directory: str) -> dict[str, object] | None:
     return {"attribution": attribution}
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv
     if len(argv) > 2:
         warn(f"usage: {PROG} [DIRECTORY]")
         return 0

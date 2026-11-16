@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import INSTALL
+from conftest import REPO_ROOT
 
 FAKE_CLAUDE = """\
 #!/usr/bin/env python3
@@ -28,7 +28,7 @@ COMPANY_ATTRIBUTION = """\
 
 @pytest.fixture
 def installed(sandbox):
-    """Run install.py against a throwaway config and return (bin_dir, env for running the wrappers)."""
+    """Run the installer against a throwaway config and return (bin_dir, env for running the wrappers)."""
     source_dir = sandbox.mkdir(".claude")
     (source_dir / "settings.json").write_text("{}\n")
     bin_dir = sandbox.home / "bin"
@@ -47,7 +47,7 @@ def installed(sandbox):
         "    add_dirs:\n"
         "      - ~/devel/projects/company\n",
     )
-    subprocess.run([sys.executable, str(INSTALL), "--config", str(config)], env=sandbox.env, check=True, capture_output=True)
+    sandbox.run_install("--config", str(config))
 
     fake_bin = sandbox.mkdir("fake-bin")
     fake_claude = fake_bin / "claude"
@@ -72,10 +72,11 @@ def settings_from_argv(argv: list[str]) -> list[dict]:
 EXPECTED = {"attribution": {"commit": "Line one\n\nCo-Authored-By: Claude <noreply@example.com>", "sessionUrl": False}}
 
 
-def test_helper_is_installed_and_wrappers_pass_bash_syntax_check(installed):
+def test_wrappers_call_the_helper_by_absolute_path_and_pass_bash_syntax_check(installed, sandbox):
     bin_dir, env = installed
-    helper = bin_dir / "claude-auth-switch-attribution"
-    assert os.access(helper, os.X_OK)
+    assert not (bin_dir / "claude-auth-switch-attribution").exists()
+    for profile in ("plain", "modeled"):
+        assert f'attribution_helper="{sandbox.tool_bin / "claude-auth-switch-attribution"}"' in (bin_dir / f"claude-{profile}").read_text()
     for profile in ("plain", "modeled"):
         subprocess.run(["bash", "-n", str(bin_dir / f"claude-{profile}")], check=True)
 
@@ -145,7 +146,7 @@ def test_user_settings_flag_replaces_the_wrapper_settings(installed, sandbox, us
 
 def test_missing_helper_warns_and_launches(installed, sandbox):
     bin_dir, env = installed
-    (bin_dir / "claude-auth-switch-attribution").unlink()
+    (sandbox.tool_bin / "claude-auth-switch-attribution").unlink()
     repo = sandbox.git_init("devel/projects/company/service")
 
     result = run_wrapper(bin_dir, env, "plain", repo, "--resume")
@@ -157,7 +158,7 @@ def test_missing_helper_warns_and_launches(installed, sandbox):
 
 def test_failing_helper_warns_and_launches(installed, sandbox):
     bin_dir, env = installed
-    helper = bin_dir / "claude-auth-switch-attribution"
+    helper = sandbox.tool_bin / "claude-auth-switch-attribution"
     helper.write_text("#!/bin/sh\necho partial\nexit 3\n")
     repo = sandbox.git_init("devel/projects/company/service")
 
@@ -168,10 +169,21 @@ def test_failing_helper_warns_and_launches(installed, sandbox):
     assert "failed, launching without git config attribution" in result.stderr
 
 
-def test_reinstall_keeps_the_helper(installed, sandbox):
-    bin_dir, env = installed
-    config = sandbox.home / "auth-switch.yaml"
+def test_install_fails_when_the_helper_is_not_on_path(installed, sandbox):
+    (sandbox.tool_bin / "claude-auth-switch-attribution").unlink()
+    env = {**sandbox.env, "PATH": f"{sandbox.tool_bin}{os.pathsep}/usr/bin{os.pathsep}/bin"}
 
-    subprocess.run([sys.executable, str(INSTALL), "--config", str(config)], env=sandbox.env, check=True, capture_output=True)
+    result = subprocess.run(
+        ["claude-code-auth-switch", "install", "--config", str(sandbox.home / "auth-switch.yaml")],
+        env=env, capture_output=True, text=True,
+    )
 
-    assert (bin_dir / "claude-auth-switch-attribution").exists()
+    assert result.returncode == 1
+    assert "claude-auth-switch-attribution is not on PATH" in result.stderr
+
+
+def test_install_py_stub_points_at_the_command():
+    result = subprocess.run([sys.executable, str(REPO_ROOT / "install.py")], capture_output=True, text=True)
+
+    assert result.returncode == 1
+    assert "claude-code-auth-switch install" in result.stderr

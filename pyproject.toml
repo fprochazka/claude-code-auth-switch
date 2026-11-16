@@ -10,6 +10,7 @@ dependencies = ["pyyaml>=6"]
 [project.scripts]
 claude-code-auth-switch = "claude_code_auth_switch.cli:main"
 claude-auth-switch-attribution = "claude_code_auth_switch.git_attribution:main"
+claude-auth-switch-session-start = "claude_code_auth_switch.session_start:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]

@@ -62,7 +62,7 @@ The `claude-code-auth-switch install` command reads `~/.claude/auth-switch.yaml`
    uv tool install git+https://github.com/fprochazka/claude-code-auth-switch.git
    ```
 
-   This puts two commands into `~/.local/bin`: `claude-code-auth-switch`, and the `claude-auth-switch-attribution` helper that the wrappers call by absolute path.
+   This puts three commands into `~/.local/bin`: `claude-code-auth-switch`, the `claude-auth-switch-attribution` helper that the wrappers call, and the `claude-auth-switch-session-start` hook that the profiles' `settings.json` calls. Both helpers are called by the absolute path they had at install time.
 
    If you used the older `python3 install.py`, it left a plain copy of `~/.local/bin/claude-auth-switch-attribution`, and `uv tool install` refuses to overwrite it. Add `--force` to the first install to replace it.
 
@@ -229,6 +229,27 @@ Subcommands such as `claude-personal mcp list` do not get the setting. If you pa
 
 If the script is missing or fails, the wrapper prints a one-line warning and starts Claude without the git config attribution.
 
+### Profile start log
+
+Claude Code records nothing about the profile in a session's files. To let other tools tell which profile started or resumed a session, the installer registers a `SessionStart` hook in every profile's `settings.json`. It never adds the hook to `source_dir`'s `settings.json`. Other `SessionStart` hooks stay, because Claude Code runs every hook from every settings source. `--sync` does not report the hook as a divergence.
+
+On every start, resume, `/clear`, compaction and fork, the hook appends one line to `auth-switch-profile-starts.jsonl` in the session's directory, `projects/<project>/<session-id>/`:
+
+```json
+{"v": 1, "ts": 1763290000000, "session_id": "<uuid>", "pid": 12345, "source": "startup", "profile": "work-team", "config_dir": "/home/you/.claude-profiles/work-team", "cwd": "/home/you/devel/projects/company/service"}
+```
+
+- `ts` is the time in epoch milliseconds.
+- `pid` is the Claude Code process, the one that writes `sessions/<pid>.json`. It is `null` when the hook cannot find it.
+- `source` is `startup`, `resume`, `clear`, `compact` or `fork`.
+- `profile` and `config_dir` come from `FP_CC_AUTH_SWITCH_PROFILE` and `CLAUDE_CONFIG_DIR`, and are `null` when a session starts without a wrapper.
+
+[cc-blackbox](https://github.com/fprochazka/cc-blackbox) reads this file. Treat the format as a contract: a change needs a new `v`.
+
+Claude Code puts the stdout of a `SessionStart` hook into the model context, so the hook prints nothing and always exits 0. It writes errors to `auth-switch-session-start.log` in the profile directory.
+
+Claude Code deletes the session directory, and the log with it, when it cleans up old transcripts. A session quit before its first prompt has no transcript, and the cleanup leaves its directory behind, because it does not delete files it does not know.
+
 ## Configuration reference
 
 ### `auth-switch.yaml`
@@ -271,7 +292,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 |------|-------|----------|
 | **Copied** | `settings.json`, `settings.local.json`, `keybindings.json`, and all top-level `*.md` files (e.g. `CLAUDE.md`) | Copied on first install. Use `--sync` to refresh from source. |
 | **Symlinked** | `commands/`, `skills/`, `agents/`, `plugins/`, `projects/`, `scripts/` | Always symlinked. Changes are shared across all profiles. |
-| **Patched** | `settings.json` (`attribution`, `plansDirectory`) | Set from profile config on every install. |
+| **Patched** | `settings.json` (`attribution`, `plansDirectory`, `hooks.SessionStart`) | Set from profile config on every install. The installer creates the file when `source_dir` has none. See [Profile start log](#profile-start-log) for the hook. |
 | **Per launch** | `--settings` (`attribution`) | Read from git config for the start directory every time a wrapper starts Claude. Never written to disk. See [Attribution from git config](#attribution-from-git-config). |
 | **Selectively synced** | `.claude.json` (`mcpServers`) | Only the `mcpServers` key is synced from `~/.claude.json` on every install. Other keys in `.claude.json` are per-profile state. |
 | **Per-profile** | `.credentials.json`, `.claude.json`, `teams/`, `history.jsonl` | Created automatically by Claude Code on first use. |

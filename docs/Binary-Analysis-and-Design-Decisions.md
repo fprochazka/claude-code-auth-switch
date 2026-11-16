@@ -146,6 +146,24 @@ Our three profiles use three different auth backends:
 
 These aren't three competing personal subscriptions on the same hardware. A personal account, a team account, and an enterprise cloud account are expected to coexist. The Docker-based Machine ID spoofing recommended by Gemini is unnecessary.
 
+## 6. A `SessionStart` hook that records the profile
+
+Checked on 2026-11-16 against Claude Code 2.1.325, by reading the binary and by running a scratch config directory with a probe hook that dumped its stdin and environment.
+
+### What we found
+
+- The payload on stdin has `session_id`, `transcript_path`, `cwd`, `hook_event_name` and `source`. `source` is one of `startup`, `resume`, `clear`, `compact` and `fork`, and an empty `matcher` matches all of them.
+- The hook inherits the environment of the claude process, so the wrapper's `FP_CC_AUTH_SWITCH_PROFILE` and `CLAUDE_CONFIG_DIR` arrive. Claude Code adds `CLAUDE_PID`, the pid of the process that writes `sessions/<pid>.json`. `$PPID` can be an intermediate shell.
+- `transcript_path` is `<config dir>/projects/<slug>/<session-id>.jsonl`. On resume it is the resumed transcript, which stays in its original project directory. The slug rules live in the binary, so the hook derives the session directory from this path and never from `cwd`.
+- The `<session-id>/` directory does not exist yet at `SessionStart`. Claude Code creates it the first time a tool result or a subagent needs it. `transcript_path` is empty in remote and storage modes.
+- Stdout of a `SessionStart` hook that exits 0 goes into the model context. With any other exit code, Claude Code shows stderr to the user. The default timeout of a command hook is 10 minutes.
+- Hooks from all settings sources run, concatenated, not overridden per event. There is no deduplication of identical commands across sources.
+- Transcript discovery, resume listings and the cleanup only read `projects/<slug>/<id>.jsonl` and named children of `<id>/`, such as `subagents/` and `tool-results/`. An unknown file in `<id>/` is ignored. When the cleanup deletes an old transcript, it deletes `<id>/` recursively. When `<id>/` has no transcript next to it, the cleanup deletes only the file names it knows and then fails to `rmdir` the directory.
+
+### Design decision
+
+The installer registers one hook group per profile, identified by the command's file name, and leaves every other `SessionStart` entry alone. The hook writes a single `O_APPEND` line into `<session-id>/auth-switch-profile-starts.jsonl` and creates the directory first. It prints nothing, exits 0 and logs errors to a file. A session that quits before its first prompt leaves a directory that holds only this log. We accept that leak.
+
 ## Summary of design decisions
 
 | Decision | Rationale |
@@ -158,4 +176,5 @@ These aren't three competing personal subscriptions on the same hardware. A pers
 | No `~/.claude.json` file swapping | `CLAUDE_CONFIG_DIR` handles this correctly (Gemini was wrong) |
 | No Machine ID spoofing | Three different auth backends, not three competing subscriptions |
 | Wrapper scripts with `exec claude` | Simple, debuggable, no runtime overhead |
-| Install script with `--sync` | Idempotent by default, force-refresh when needed |
+| Installer with `--sync` | Idempotent by default, force-refresh when needed |
+| `SessionStart` hook writes the profile into the session directory | Claude Code's own session files carry no profile; the hook gets the wrapper's environment and the transcript path |

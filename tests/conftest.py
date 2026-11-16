@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Console scripts of the package. The sandbox reaches them through shims in its own bin directory,
 # so a test can delete or replace one without touching the project environment.
-TOOL_COMMANDS = ("claude-code-auth-switch", "claude-auth-switch-attribution")
+TOOL_COMMANDS = ("claude-code-auth-switch", "claude-auth-switch-attribution", "claude-auth-switch-session-start")
 
 
 @dataclass

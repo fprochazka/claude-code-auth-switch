@@ -390,9 +390,12 @@ def generate_wrapper_script(
 
     lines.append("")
 
-    # Subcommands (mcp, auth, etc.) don't accept --add-dir or --model,
-    # so pass through args directly when a subcommand is detected.
-    subcommands = "mcp|auth|doctor|install|setup-token|update|upgrade|agents|auto-mode|plugin|plugins"
+    # Subcommands (mcp, auth, etc.) reject --add-dir, --model and other session options with
+    # "unknown option", so pass through args directly when a subcommand is detected.
+    subcommands = (
+        "mcp|auth|doctor|install|setup-token|update|upgrade|agents|auto-mode|plugin|plugins"
+        "|attach|logs|respawn|rm|stop|kill|purge|import|gateway|ultrareview"
+    )
     lines.extend([
         f'case "${{1:-}}" in',
         f'  {subcommands}) exec claude "$@" ;;',

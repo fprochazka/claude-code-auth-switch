@@ -121,6 +121,18 @@ def test_subcommand_passthrough_gets_no_settings(installed, sandbox):
     assert argv == ["mcp", "list"]
 
 
+@pytest.mark.parametrize("subcommand", [
+    "mcp", "auth", "doctor", "install", "setup-token", "update", "upgrade", "agents", "auto-mode", "plugin", "plugins",
+    "attach", "logs", "respawn", "rm", "stop", "kill", "purge", "import", "gateway", "ultrareview",
+])
+def test_subcommands_get_neither_model_nor_add_dir(installed, sandbox, subcommand):
+    bin_dir, env = installed
+
+    argv = json.loads(run_wrapper(bin_dir, env, "modeled", sandbox.home, subcommand, "arg").stdout)
+
+    assert argv == [subcommand, "arg"]
+
+
 @pytest.mark.parametrize("user_flag", [["--settings", "/tmp/own.json"], ["--settings=/tmp/own.json"]])
 def test_user_settings_flag_replaces_the_wrapper_settings(installed, sandbox, user_flag):
     bin_dir, env = installed

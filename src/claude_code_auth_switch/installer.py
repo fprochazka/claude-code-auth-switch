@@ -15,6 +15,7 @@ import hashlib
 import shlex
 import shutil
 import stat
+import tempfile
 import subprocess
 import sys
 from pathlib import Path
@@ -303,6 +304,54 @@ class ProfileBackup:
         print(f"  backed up {path.name} to {target}")
 
 
+TEMP_MARKER = ".cc-auth-switch-tmp-"
+
+
+def current_umask() -> int:
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
+
+
+def write_profile_file(path: Path, content: bytes, backup: ProfileBackup | None, new_mode: int | None = None) -> bool:
+    """Write a file in a profile's root; the only way the installer changes one. Return whether it changed.
+
+    The final content goes to a temp file next to the target first. When its bytes equal the target,
+    nothing happens: no backup, no output. Otherwise the old target goes into the run's backup and the
+    temp file replaces it atomically, keeping the target's mode (.claude.json is 0600). A new file gets
+    new_mode, or the umask default. The temp name starts with a dot and never ends in .md or .json, so
+    Claude Code does not load it if the process dies in between.
+    """
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}{TEMP_MARKER}", dir=path.parent)
+    temp = Path(temp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            current = path.read_bytes()
+        except FileNotFoundError:
+            current = None
+        if current == content:
+            temp.unlink()
+            return False
+        if current is not None:
+            mode = stat.S_IMODE(path.stat().st_mode)
+            if backup is not None:
+                backup.save(path)
+        else:
+            mode = new_mode if new_mode is not None else 0o666 & ~current_umask()
+            if backup is not None:
+                backup.created(path)
+        os.chmod(temp, mode)
+        os.replace(temp, path)
+        return True
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+
+
 def expected_copy(source_dir: Path, filename: str, profile_config: dict, shared: SharedPatches | None) -> bytes:
     """Content that a profile file has right after a sync, patches included."""
     if filename == "settings.json":
@@ -379,8 +428,8 @@ def setup_profile_dir(
     profile_dir.mkdir(parents=True, exist_ok=True)
     profile_config = profile_config or {}
 
-    # Copy mutable files. A sync skips files that already hold what it would write, so a regular
-    # unattended sync stays quiet, and backs up the others before replacing them.
+    # Copy mutable files, with the settings.json patches already applied. A sync writes only files
+    # whose bytes change, so a regular unattended sync stays quiet.
     for filename in resolve_copy_files(source_dir):
         src = source_dir / filename
         dst = profile_dir / filename
@@ -388,15 +437,9 @@ def setup_profile_dir(
             continue
         if dst.exists() and not force_sync:
             continue
-        if dst.exists():
-            if dst.read_bytes() == expected_copy(source_dir, filename, profile_config, shared):
-                continue
-            if backup is not None:
-                backup.save(dst)
-        elif backup is not None:
-            backup.created(dst)
-        shutil.copy2(str(src), str(dst))
-        print(f"  {'synced' if force_sync else 'copied'} {filename}")
+        content = expected_copy(source_dir, filename, profile_config, shared)
+        if write_profile_file(dst, content, backup, new_mode=stat.S_IMODE(src.stat().st_mode)):
+            print(f"  {'synced' if force_sync else 'copied'} {filename}")
 
     # Create directory symlinks
     for dirname in SYMLINK_DIRS:
@@ -451,7 +494,8 @@ def sync_mcp_servers(
 
     existing_servers = profile_data.get("mcpServers")
 
-    # Check if already in sync
+    # .claude.json is live state that running sessions rewrite all the time, in their own formatting.
+    # Only a change of mcpServers is a reason to rewrite it, never a formatting difference.
     if existing_servers == source_servers:
         return
 
@@ -463,9 +507,8 @@ def sync_mcp_servers(
             print(f"  note: overwriting profile-only mcpServers: {', '.join(sorted(profile_only))}")
 
     profile_data["mcpServers"] = source_servers
-    if backup is not None:
-        backup.save(profile_claude_json)
-    profile_claude_json.write_text(json.dumps(profile_data, indent=2) + "\n")
+    if not write_profile_file(profile_claude_json, (json.dumps(profile_data, indent=2) + "\n").encode(), backup):
+        return
 
     server_count = len(source_servers) if isinstance(source_servers, dict) else 0
     print(f"  synced mcpServers ({server_count} server{'s' if server_count != 1 else ''})")
@@ -575,14 +618,12 @@ def patch_settings_json(
 
     original = copy.deepcopy(data)
     apply_profile_patches(data, profile_config, shared)
-
-    if data == original:
+    if not data and not settings_path.exists():
         return
 
-    changed = [key for key in data if data.get(key) != original.get(key)]
-    if backup is not None and settings_path.exists():
-        backup.save(settings_path)
-    settings_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    if not write_profile_file(settings_path, (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode(), backup):
+        return
+    changed = [key for key in data if data.get(key) != original.get(key)] or ["formatting"]
     print(f"  patched {', '.join(changed)} in settings.json")
 
 

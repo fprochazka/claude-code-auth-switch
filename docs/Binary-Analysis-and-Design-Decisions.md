@@ -188,7 +188,7 @@ The rollback takes the owner of a record from the profile start log of [section 
 
 ### Not verified
 
-The migration and the rollback ran only against simulated writers, not against live Claude Code sessions. The `renamex_np(RENAME_SWAP)` branch for macOS follows the documented API and has not run on a Mac.
+The migration has run on Linux for four profiles with about 30 live Claude Code sessions, and every session kept its record and could list and message the sessions of the other profiles. The rollback ran only against simulated writers, not against live sessions. The `renamex_np(RENAME_SWAP)` branch for macOS follows the documented API and has not run on a Mac.
 
 ## Summary of design decisions
 

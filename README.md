@@ -308,7 +308,7 @@ cc-auth-switch rollback-sessions work-team
 
 The rollback replaces the symlink with a real directory and moves back the records of the profile's live sessions. It finds the owner of a record in the [profile start log](#profile-start-log), then in `/proc/<pid>/environ` on Linux, then in the migration backups. It deletes the records of ended sessions that belong to the profile and leaves everything else in `~/.claude/sessions`. Turning the flag off does not roll back by itself: the installer only warns that `sessions/` is still shared.
 
-The migration and the rollback were tested with simulated writers in a scratch directory, not yet under real Claude Code sessions. The macOS `renamex_np` branch has not run on a Mac. Keep the backup until you have checked that every session still lists and receives messages, then delete it by hand.
+The migration has run on Linux for four profiles while about 30 Claude Code sessions were running in them. Afterwards every session still had its record, `ListAgents` listed the sessions of all four profiles, and a message to a session of another profile got a reply. The rollback has run only against simulated writers in a scratch directory, not under live sessions. The macOS `renamex_np` branch has not run on a Mac. Keep the backup until you have checked that every session still lists and receives messages, then delete it by hand.
 
 ## Configuration reference
 

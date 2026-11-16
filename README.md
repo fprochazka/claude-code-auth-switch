@@ -141,6 +141,12 @@ Terminal 2:  cd ~/work-project && claude-work-team
 
 This works because each profile has its own `CLAUDE_CONFIG_DIR` (no credential collision) and different working directories mean different `.claude/history.jsonl.lock` files (no file lock collision).
 
+### Session names in tmux
+
+Inside tmux, the wrapper names a new session after the tmux session and pane: `--name "<tmux session>-p<pane number>"`, for example `api-service-p12` for pane `%12`. Other sessions can then address it by that name with `SendMessage`.
+
+The wrapper adds no name when you pass `-n`/`--name` yourself, and none when you resume or continue a session (`-r`/`--resume`, `-c`/`--continue`, `--session-id`, `--fork-session`, `--from-pr`). A name given at launch replaces the saved title of a resumed session, including one set with `/rename`. When `tmux display-message` fails, the session starts without a name. Subcommands such as `claude-work-team mcp list` never get a name, because they reject the option.
+
 ### Additional directories
 
 The `add_dirs` config option maps to Claude Code's `--add-dir` flag, giving the profile access to additional project directories:

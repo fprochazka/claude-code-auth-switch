@@ -717,6 +717,27 @@ def generate_wrapper_script(
             '',
         ])
 
+    # Name the session after its tmux pane, so other sessions can address it by a name that says where
+    # it runs. A name given at launch overrides the saved title of a resumed session, /rename included,
+    # so the wrapper stays out of the way when the user names or resumes a session.
+    lines.extend([
+        '# Session name from the tmux session and pane (skipped when naming or resuming a session)',
+        'name_args=()',
+        'if [[ -n "${TMUX:-}" && -n "${TMUX_PANE:-}" ]]; then',
+        '  has_name=false',
+        '  for arg in "$@"; do',
+        '    case "$arg" in',
+        '      -n|--name|--name=*|-r|--resume|--resume=*|-c|--continue|--session-id|--session-id=*|--fork-session|--from-pr|--from-pr=*)',
+        '        has_name=true; break ;;',
+        '    esac',
+        '  done',
+        '  if [[ "$has_name" == false ]] && tmux_session=$(tmux display-message -p -t "$TMUX_PANE" \'#S\' 2>/dev/null) && [[ -n "$tmux_session" ]]; then',
+        '    name_args=(--name "${tmux_session}-p${TMUX_PANE#%}")',
+        '  fi',
+        'fi',
+        '',
+    ])
+
     cmd_parts = ["exec claude"]
     for d in add_dirs:
         expanded = expand_path(d)
@@ -724,6 +745,7 @@ def generate_wrapper_script(
     if attribution_helper is not None:
         # bash before 4.4 treats an empty array as unset under set -u, hence the ${x[@]+...} form.
         cmd_parts.append('${settings_args[@]+"${settings_args[@]}"}')
+    cmd_parts.append('${name_args[@]+"${name_args[@]}"}')
     cmd_parts.append('"${user_args[@]}"' if model else '"$@"')
 
     lines.append(" \\\n  ".join(cmd_parts))

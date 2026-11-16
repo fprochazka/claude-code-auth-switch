@@ -225,3 +225,63 @@ def test_install_removes_entry_points_of_an_older_uv_install(installed, sandbox)
     sandbox.run_install("--config", str(sandbox.home / "auth-switch.yaml"))
 
     assert sorted(p.name for p in bin_dir.iterdir()) == ["claude-modeled", "claude-plain"]
+
+
+FAKE_TMUX = """\
+#!/bin/sh
+[ -n "${FAKE_TMUX_FAIL:-}" ] && exit 1
+[ "$*" = "display-message -p -t $TMUX_PANE #S" ] || exit 2
+printf '%s\\n' "$FAKE_TMUX_SESSION"
+"""
+
+
+@pytest.fixture
+def in_tmux(installed, sandbox):
+    bin_dir, env = installed
+    fake_tmux = sandbox.home / "fake-bin" / "tmux"
+    fake_tmux.write_text(FAKE_TMUX)
+    fake_tmux.chmod(0o755)
+    return bin_dir, {**env, "TMUX": "/tmp/tmux-1000/default,1,0", "TMUX_PANE": "%12", "FAKE_TMUX_SESSION": "owner/repo"}
+
+
+@pytest.mark.parametrize("profile", ["plain", "modeled"])
+def test_wrapper_names_the_session_after_the_tmux_session_and_pane(in_tmux, sandbox, profile):
+    bin_dir, env = in_tmux
+
+    result = run_wrapper(bin_dir, env, profile, sandbox.home, "-p", "hello")
+
+    assert result.returncode == 0, result.stderr
+    argv = json.loads(result.stdout)
+    assert argv[argv.index("--name") + 1] == "owner/repo-p12"
+
+
+def test_wrapper_outside_tmux_passes_no_name(installed, sandbox):
+    bin_dir, env = installed
+
+    assert "--name" not in json.loads(run_wrapper(bin_dir, env, "plain", sandbox.home).stdout)
+
+
+@pytest.mark.parametrize("user_args", [
+    ["-n", "mine"], ["--name", "mine"], ["--name=mine"], ["-r"], ["--resume"], ["--resume", "abc"], ["--resume=abc"],
+    ["-c"], ["--continue"], ["--session-id", "abc"], ["--session-id=abc"], ["--fork-session"], ["--from-pr", "7"], ["--from-pr=7"],
+])
+def test_wrapper_passes_no_name_when_the_session_already_has_or_resumes_one(in_tmux, sandbox, user_args):
+    bin_dir, env = in_tmux
+
+    argv = json.loads(run_wrapper(bin_dir, env, "plain", sandbox.home, *user_args).stdout)
+
+    assert argv == user_args
+
+
+def test_wrapper_launches_without_name_when_tmux_fails(in_tmux, sandbox):
+    bin_dir, env = in_tmux
+
+    result = run_wrapper(bin_dir, {**env, "FAKE_TMUX_FAIL": "1"}, "plain", sandbox.home, "-p", "hello")
+
+    assert (result.returncode, json.loads(result.stdout)) == (0, ["-p", "hello"])
+
+
+def test_subcommands_get_no_name(in_tmux, sandbox):
+    bin_dir, env = in_tmux
+
+    assert json.loads(run_wrapper(bin_dir, env, "modeled", sandbox.home, "mcp", "list").stdout) == ["mcp", "list"]

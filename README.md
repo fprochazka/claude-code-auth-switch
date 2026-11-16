@@ -303,7 +303,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 |------|-------------|
 | `--config PATH` | Config file path (default: `~/.claude/auth-switch.yaml`, falling back to `~/.claude-profiles/config.yaml`) |
 | `--sync` | Re-copy mutable files from source. If a profile file has diverged (contains changes not in source), shows a diff and exits — prompting you to merge first |
-| `--sync --force` | Force overwrite of diverged profile files without prompting. Each replaced file is backed up first and kept until you delete it, see [Re-syncing after config changes](#re-syncing-after-config-changes) |
+| `--sync --force` | Force overwrite of diverged profile files without prompting. Each replaced file is backed up first and kept until you delete it, as with every file that an install changes, see [Re-syncing after config changes](#re-syncing-after-config-changes) |
 
 ### Shared file handling
 
@@ -332,7 +332,7 @@ cc-auth-switch install --sync
 cc-auth-switch install --sync --force
 ```
 
-Before `--sync` or `--sync --force` replaces a copied file in a profile's root (`settings.json`, `settings.local.json`, `keybindings.json`, a top-level `*.md`), it copies the old file to `<profile>/.auth-switch-backups/<UTC timestamp>/` and prints one line with the backup path. The symlinked directories are shared and never backed up. A file that already holds what the sync would write is neither replaced nor backed up, so a run that changes nothing prints no line per profile and creates no backup directory. That makes `--sync --force` safe to run unattended, for example from an upgrade script.
+Before any `cc-auth-switch install`, with or without `--sync` and `--force`, changes an existing file in a profile's root, it copies the old file to `<profile>/.auth-switch-backups/<UTC timestamp>/` and prints one line with the backup path. That covers the files that `--sync` replaces (`settings.json`, `settings.local.json`, `keybindings.json`, a top-level `*.md`), the patches to `settings.json` (`attribution`, `plansDirectory`, the plugin keys, the hook) and the `mcpServers` sync into `.claude.json`. When a run writes a file twice, the backup holds the content from before the run. Files that the run creates, and the shared symlinked directories, are never backed up. A file that already holds what the install would write is not touched, so a run that changes nothing prints no line per profile and creates no backup directory. That makes `--sync --force` safe to run unattended, for example from an upgrade script.
 
 The tool never deletes a backup. Remove the directories with `rm` whenever you no longer need them, for example `rm -r ~/.claude-profiles/*/.auth-switch-backups`. A run that backed something up says so in its last line.
 

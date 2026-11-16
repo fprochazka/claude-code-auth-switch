@@ -82,3 +82,26 @@ def test_every_sync_that_replaces_a_file_keeps_its_own_backup(sandbox, synced, f
     backups = sorted((profiles / "personal" / BACKUPS).iterdir())
     assert len(backups) == 25
     assert sorted(next(iter(set(lines) - set((b / "keybindings.json").read_text().splitlines(keepends=True)))) for b in backups) == sorted(lines)
+
+
+def test_plain_install_backs_up_the_files_it_patches(sandbox, synced):
+    config, source_dir, profiles = synced
+    profile = profiles / "work-team"
+    (profile / ".claude.json").write_text('{"numStartups": 3}\n')
+    old_settings = (profile / "settings.json").read_text()
+    (sandbox.home / ".claude.json").write_text(json.dumps({"mcpServers": {"tool": {"command": "tool"}}}) + "\n")
+    sandbox.write("auth-switch.yaml", (sandbox.home / "auth-switch.yaml").read_text().replace("from profile", "changed"))
+
+    result = sandbox.run_install("--config", config)
+
+    [backup] = (profile / BACKUPS).iterdir()
+    assert (backup / "settings.json").read_text() == old_settings
+    assert (backup / ".claude.json").read_text() == '{"numStartups": 3}\n'
+    assert "never deletes them; remove them with rm" in result.stdout.splitlines()[-1]
+    assert not (profiles / "personal" / BACKUPS).exists()
+
+
+def test_first_install_backs_up_nothing(sandbox, synced):
+    config, source_dir, profiles = synced
+
+    assert not list(profiles.glob(f"*/{BACKUPS}"))

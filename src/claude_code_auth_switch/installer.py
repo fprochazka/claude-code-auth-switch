@@ -72,7 +72,7 @@ SYMLINK_DIRS = [
 # Settings keys that mirror the shared plugins/ directory, copied from source_dir on every install.
 PLUGIN_SETTINGS_KEYS = ("enabledPlugins", "extraKnownMarketplaces")
 
-# Profile files that --sync replaces are kept below the profile root. The tool never deletes them.
+# Profile root files that an install changes are backed up below the profile root. The tool never deletes them.
 BACKUPS_DIR_NAME = ".auth-switch-backups"
 
 DEFAULT_CONFIG_PATH = Path("~/.claude/auth-switch.yaml").expanduser()
@@ -268,10 +268,12 @@ def resolve_command(name: str) -> Path:
 
 
 class ProfileBackup:
-    """Backups of profile files that --sync replaces, in <profile>/.auth-switch-backups/<UTC timestamp>/.
+    """Backups of existing profile root files that an install run changes, in <profile>/.auth-switch-backups/<UTC timestamp>/.
 
-    The directory is created only when a file is backed up, so a run that changes nothing leaves no
-    trace. It sits below the profile root and keeps the file names, so Claude Code does not load a
+    Every write to an existing file goes through save() first: copied files, the settings.json
+    patches and the mcpServers sync. A run can write one file twice (a copy, then the patch); only
+    the content from before the run is kept, and a file that the run created is not backed up. The directory is created only when a file is
+    backed up, so a run that changes nothing leaves no trace. It sits below the profile root and keeps the file names, so Claude Code does not load a
     backed-up CLAUDE.md as instructions. The tool never deletes a backup; the user removes them.
     """
 
@@ -279,8 +281,16 @@ class ProfileBackup:
         self.root = profile_dir / BACKUPS_DIR_NAME
         self.stamp = stamp
         self.directory: Path | None = None
+        self.saved: set[str] = set()
+
+    def created(self, path: Path) -> None:
+        """Note a file this run created, so later writes in the same run do not back it up."""
+        self.saved.add(path.name)
 
     def save(self, path: Path) -> None:
+        if path.name in self.saved:
+            return
+        self.saved.add(path.name)
         if self.directory is None:
             self.directory = self.root / self.stamp
             counter = 1
@@ -383,6 +393,8 @@ def setup_profile_dir(
                 continue
             if backup is not None:
                 backup.save(dst)
+        elif backup is not None:
+            backup.created(dst)
         shutil.copy2(str(src), str(dst))
         print(f"  {'synced' if force_sync else 'copied'} {filename}")
 
@@ -409,6 +421,7 @@ def sync_mcp_servers(
     profile_name: str,
     profile_dir: Path,
     source_claude_json_path: Path,
+    backup: ProfileBackup | None = None,
 ) -> None:
     """Sync mcpServers from the global ~/.claude.json into a profile's .claude.json.
 
@@ -450,6 +463,8 @@ def sync_mcp_servers(
             print(f"  note: overwriting profile-only mcpServers: {', '.join(sorted(profile_only))}")
 
     profile_data["mcpServers"] = source_servers
+    if backup is not None:
+        backup.save(profile_claude_json)
     profile_claude_json.write_text(json.dumps(profile_data, indent=2) + "\n")
 
     server_count = len(source_servers) if isinstance(source_servers, dict) else 0
@@ -545,8 +560,9 @@ def patch_settings_json(
     profile_dir: Path,
     profile_config: dict,
     shared: SharedPatches | None = None,
+    backup: ProfileBackup | None = None,
 ) -> None:
-    """Patch per-profile settings (attribution, plansDirectory, the SessionStart hook) into settings.json."""
+    """Patch per-profile settings (attribution, plansDirectory, plugins, the SessionStart hook) into settings.json."""
     settings_path = profile_dir / "settings.json"
     data: object = {}
     if settings_path.exists():
@@ -564,6 +580,8 @@ def patch_settings_json(
         return
 
     changed = [key for key in data if data.get(key) != original.get(key)]
+    if backup is not None and settings_path.exists():
+        backup.save(settings_path)
     settings_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     print(f"  patched {', '.join(changed)} in settings.json")
 
@@ -887,10 +905,10 @@ def install(config_arg: Path | None, sync: bool, force: bool) -> None:
         setup_profile_dir(profile_name, profile_dir, source_dir, sync, profile_config, shared, backup)
 
         # Patch attribution settings and the SessionStart hook into profile's settings.json
-        patch_settings_json(profile_name, profile_dir, profile_config, shared)
+        patch_settings_json(profile_name, profile_dir, profile_config, shared, backup)
 
         # Sync mcpServers from global ~/.claude.json
-        sync_mcp_servers(profile_name, profile_dir, source_claude_json_path)
+        sync_mcp_servers(profile_name, profile_dir, source_claude_json_path, backup)
 
         # Generate and install wrapper script
         content = generate_wrapper_script(

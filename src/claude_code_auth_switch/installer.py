@@ -810,7 +810,6 @@ def install(config_arg: Path | None, sync: bool, force: bool) -> None:
     cleanup_stale_scripts(bin_dir, active_script_names)
     cleanup_legacy_commands(bin_dir)
 
-    if any(backup.directory is not None for backup in backups):
-        print(f"\nBackups of replaced files are in <profile>/{BACKUPS_DIR_NAME}/. cc-auth-switch never deletes them; remove them with rm when you no longer need them.")
-
     print("\nDone.")
+    if any(backup.directory is not None for backup in backups):
+        print(f"Backups of replaced files are in <profile>/{BACKUPS_DIR_NAME}/. cc-auth-switch never deletes them; remove them with rm when you no longer need them.")

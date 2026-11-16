@@ -77,7 +77,7 @@ def test_every_sync_that_replaces_a_file_keeps_its_own_backup(sandbox, synced, f
         # Only a removed line, so plain --sync replaces the file without reporting a divergence.
         keybindings.write_text("".join(lines[:run] + lines[run + 1:]))
         result = sandbox.run_install("--config", config, *flags)
-        assert "never deletes them; remove them with rm" in result.stdout
+        assert "never deletes them; remove them with rm" in result.stdout.splitlines()[-1]
 
     backups = sorted((profiles / "personal" / BACKUPS).iterdir())
     assert len(backups) == 25

@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Console scripts of the package. The sandbox reaches them through shims in its own bin directory,
 # so a test can delete or replace one without touching the project environment.
-TOOL_COMMANDS = ("claude-code-auth-switch", "claude-auth-switch-attribution", "claude-auth-switch-session-start")
+TOOL_COMMANDS = ("cc-auth-switch",)
 
 
 @dataclass
@@ -69,7 +69,7 @@ class GitSandbox:
 
     def run_install(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["claude-code-auth-switch", "install", *args],
+            ["cc-auth-switch", "install", *args],
             env=self.env,
             capture_output=True,
             text=True,
@@ -78,7 +78,7 @@ class GitSandbox:
 
     def run_helper(self, directory: Path) -> HelperResult:
         result = subprocess.run(
-            ["claude-auth-switch-attribution", str(directory)],
+            ["cc-auth-switch", "attribution", str(directory)],
             env=self.env,
             capture_output=True,
             text=True,

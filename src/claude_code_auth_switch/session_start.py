@@ -1,7 +1,7 @@
 """
 SessionStart hook that records which profile started or resumed a Claude Code session.
 
-The installer registers this command in every profile's settings.json. Claude Code runs it on
+The installer registers `cc-auth-switch session-start` in every profile's settings.json. Claude Code runs it on
 startup, resume, clear, compact and fork, with the hook payload on stdin and the wrapper's
 environment. The hook appends one JSON line to
 

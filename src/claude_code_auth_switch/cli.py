@@ -1,21 +1,42 @@
-import argparse
-from pathlib import Path
+import sys
 
-from claude_code_auth_switch import installer
-
-
-def add_config_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--config",
-        type=Path,
-        default=None,
-        help=f"Path to config file (default: {installer.DEFAULT_CONFIG_PATH}, falling back to {installer.LEGACY_CONFIG_PATH})",
-    )
+PROG = "cc-auth-switch"
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+
+    # Every wrapper runs `attribution` at launch, and Claude Code runs `session-start` on every
+    # session start. Both skip argparse and import only their own module; yaml and the installer stay
+    # unloaded on these paths.
+    command = argv[0] if argv else None
+    if command == "attribution":
+        from claude_code_auth_switch import git_attribution
+
+        return git_attribution.main([f"{PROG} attribution", *argv[1:]])
+    if command == "session-start":
+        from claude_code_auth_switch import session_start
+
+        return session_start.main()
+
+    return run_management_command(argv)
+
+
+def run_management_command(argv: list[str]) -> int:
+    import argparse
+    from pathlib import Path
+
+    def add_config_argument(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--config",
+            type=Path,
+            default=None,
+            help="Path to config file (default: ~/.claude/auth-switch.yaml, falling back to ~/.claude-profiles/config.yaml)",
+        )
+
     parser = argparse.ArgumentParser(
-        prog="claude-code-auth-switch",
+        prog=PROG,
         description="Manage Claude Code profiles: isolated config directories and claude-<name> wrapper scripts",
     )
     commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
@@ -32,8 +53,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Force overwrite of diverged profile files (use with --sync)",
     )
+    commands.add_parser(
+        "attribution",
+        help="Print the attribution settings from git config for a directory (run by the wrappers)",
+        usage=f"{PROG} attribution [DIRECTORY]",
+    )
+    commands.add_parser(
+        "session-start",
+        help="Record the profile of a starting session (run by the SessionStart hook)",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "install":
+        from claude_code_auth_switch import installer
+
         installer.install(args.config, args.sync, args.force)
     return 0

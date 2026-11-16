@@ -1,8 +1,8 @@
 """
 Print the Claude Code attribution settings that the user's git config sets for a directory.
 
-The package installs this module as the claude-auth-switch-attribution command, and every
-generated wrapper runs it by absolute path at launch. The output is either empty or a JSON object
+The package exposes this module as `cc-auth-switch attribution`, and every generated wrapper
+runs it by absolute path at launch. The output is either empty or a JSON object
 for `claude --settings`:
 
     {"attribution": {"commit": "...", "pr": "...", "sessionUrl": true}}
@@ -33,7 +33,7 @@ GLOB_CHARS = ("*", "?", "[")
 # git stops following includes at this depth, so a cycle cannot recurse forever.
 MAX_INCLUDE_DEPTH = 10
 
-PROG = "claude-auth-switch-attribution"
+PROG = "cc-auth-switch attribution"
 
 
 def warn(message: str) -> None:

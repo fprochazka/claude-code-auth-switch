@@ -1,4 +1,6 @@
 import os
+import subprocess
+import sys
 
 COMPANY_ATTRIBUTION = """\
 [claude-code "attribution"]
@@ -266,3 +268,19 @@ def test_output_is_valid_json_for_special_characters(sandbox):
 
     assert result.settings == {"attribution": {"pr": 'quote " backslash \\ tab \t emoji \U0001F916 }'}}
     assert os.linesep not in result.stdout.rstrip("\n")
+
+
+def test_attribution_and_session_start_do_not_load_the_installer(sandbox):
+    # Both run on every launch or session start, so they must not pay for yaml and the installer.
+    script = (
+        "import io, sys\n"
+        "from claude_code_auth_switch.cli import main\n"
+        "main(['attribution', sys.argv[1]])\n"
+        "sys.stdin = io.StringIO('{}')\n"
+        "main(['session-start'])\n"
+        "loaded = sorted(m for m in sys.modules if m == 'yaml' or m.endswith('.installer'))\n"
+        "print(loaded)\n"
+    )
+    result = subprocess.run([sys.executable, "-c", script, str(sandbox.home)], env=sandbox.env, capture_output=True, text=True)
+
+    assert result.stdout.strip() == "[]", result.stderr

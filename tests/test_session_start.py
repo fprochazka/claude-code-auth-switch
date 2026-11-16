@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-HOOK = "claude-auth-switch-session-start"
+HOOK = "cc-auth-switch session-start"
 SESSION_ID = "0b6f2c1e-1111-4222-8333-444455556666"
 
 
@@ -26,7 +26,7 @@ def hook_env(sandbox):
 
 
 def run_hook(env: dict, stdin: str, argv: list[str] | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(argv or [HOOK], input=stdin, env=env, capture_output=True, text=True)
+    return subprocess.run(argv or HOOK.split(), input=stdin, env=env, capture_output=True, text=True)
 
 
 def read_lines(log) -> list[dict]:
@@ -127,7 +127,8 @@ def install_config(sandbox):
 
 
 def our_group(sandbox) -> dict:
-    return {"matcher": "", "hooks": [{"type": "command", "command": shlex.quote(str(sandbox.tool_bin / HOOK)), "timeout": 10}]}
+    command = f"{shlex.quote(str(sandbox.tool_bin / 'cc-auth-switch'))} session-start"
+    return {"matcher": "", "hooks": [{"type": "command", "command": command, "timeout": 10}]}
 
 
 def settings(sandbox, profile: str) -> dict:
@@ -150,7 +151,10 @@ def test_install_is_idempotent_and_replaces_an_old_hook_path(sandbox, install_co
     sandbox.run_install("--config", str(config))
     settings_path = sandbox.home / "profiles" / "personal" / "settings.json"
     data = json.loads(settings_path.read_text())
-    data["hooks"]["SessionStart"].insert(0, {"matcher": "startup", "hooks": [{"type": "command", "command": f"/old/bin/{HOOK}"}]})
+    data["hooks"]["SessionStart"][:0] = [
+        {"matcher": "startup", "hooks": [{"type": "command", "command": "/old/bin/claude-auth-switch-session-start"}]},
+        {"matcher": "", "hooks": [{"type": "command", "command": "'/old path/bin/cc-auth-switch' session-start", "timeout": 10}]},
+    ]
     settings_path.write_text(json.dumps(data, indent=2) + "\n")
 
     sandbox.run_install("--config", str(config))

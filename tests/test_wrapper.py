@@ -74,9 +74,8 @@ EXPECTED = {"attribution": {"commit": "Line one\n\nCo-Authored-By: Claude <norep
 
 def test_wrappers_call_the_helper_by_absolute_path_and_pass_bash_syntax_check(installed, sandbox):
     bin_dir, env = installed
-    assert not (bin_dir / "claude-auth-switch-attribution").exists()
     for profile in ("plain", "modeled"):
-        assert f'attribution_helper="{sandbox.tool_bin / "claude-auth-switch-attribution"}"' in (bin_dir / f"claude-{profile}").read_text()
+        assert f'auth_switch="{sandbox.tool_bin / "cc-auth-switch"}"' in (bin_dir / f"claude-{profile}").read_text()
     for profile in ("plain", "modeled"):
         subprocess.run(["bash", "-n", str(bin_dir / f"claude-{profile}")], check=True)
 
@@ -146,7 +145,7 @@ def test_user_settings_flag_replaces_the_wrapper_settings(installed, sandbox, us
 
 def test_missing_helper_warns_and_launches(installed, sandbox):
     bin_dir, env = installed
-    (sandbox.tool_bin / "claude-auth-switch-attribution").unlink()
+    (sandbox.tool_bin / "cc-auth-switch").unlink()
     repo = sandbox.git_init("devel/projects/company/service")
 
     result = run_wrapper(bin_dir, env, "plain", repo, "--resume")
@@ -158,7 +157,7 @@ def test_missing_helper_warns_and_launches(installed, sandbox):
 
 def test_failing_helper_warns_and_launches(installed, sandbox):
     bin_dir, env = installed
-    helper = sandbox.tool_bin / "claude-auth-switch-attribution"
+    helper = sandbox.tool_bin / "cc-auth-switch"
     helper.write_text("#!/bin/sh\necho partial\nexit 3\n")
     repo = sandbox.git_init("devel/projects/company/service")
 
@@ -170,20 +169,59 @@ def test_failing_helper_warns_and_launches(installed, sandbox):
 
 
 def test_install_fails_when_the_helper_is_not_on_path(installed, sandbox):
-    (sandbox.tool_bin / "claude-auth-switch-attribution").unlink()
+    (sandbox.tool_bin / "cc-auth-switch").unlink()
     env = {**sandbox.env, "PATH": f"{sandbox.tool_bin}{os.pathsep}/usr/bin{os.pathsep}/bin"}
 
     result = subprocess.run(
-        ["claude-code-auth-switch", "install", "--config", str(sandbox.home / "auth-switch.yaml")],
+        [sys.executable, "-m", "claude_code_auth_switch", "install", "--config", str(sandbox.home / "auth-switch.yaml")],
         env=env, capture_output=True, text=True,
     )
 
     assert result.returncode == 1
-    assert "claude-auth-switch-attribution is not on PATH" in result.stderr
+    assert "cc-auth-switch is not on PATH" in result.stderr
 
 
 def test_install_py_stub_points_at_the_command():
     result = subprocess.run([sys.executable, str(REPO_ROOT / "install.py")], capture_output=True, text=True)
 
     assert result.returncode == 1
-    assert "claude-code-auth-switch install" in result.stderr
+    assert "cc-auth-switch install" in result.stderr
+
+
+LEGACY_HELPER = REPO_ROOT / "tests" / "fixtures" / "legacy-claude-auth-switch-attribution"
+
+
+def test_install_removes_the_helper_that_install_py_copied(installed, sandbox):
+    bin_dir, env = installed
+    helper = bin_dir / "claude-auth-switch-attribution"
+    helper.write_bytes(LEGACY_HELPER.read_bytes())
+
+    result = sandbox.run_install("--config", str(sandbox.home / "auth-switch.yaml"))
+
+    assert not helper.exists()
+    assert f"removed old {helper}" in result.stdout
+
+
+def test_install_keeps_files_that_are_not_clearly_ours(installed, sandbox):
+    bin_dir, env = installed
+    edited = bin_dir / "claude-auth-switch-attribution"
+    edited.write_text(LEGACY_HELPER.read_text() + "# local change\n")
+    foreign = bin_dir / "claude-code-auth-switch"
+    foreign.write_text("#!/bin/sh\n")
+
+    result = sandbox.run_install("--config", str(sandbox.home / "auth-switch.yaml"))
+
+    assert edited.exists() and foreign.exists()
+    assert f"warning: left {edited} in place" in result.stdout
+    assert f"warning: left {foreign} in place" in result.stdout
+
+
+def test_install_removes_entry_points_of_an_older_uv_install(installed, sandbox):
+    bin_dir, env = installed
+    tool_bin = sandbox.mkdir("uv-tools/claude-code-auth-switch/bin")
+    for name in ("claude-auth-switch-attribution", "claude-auth-switch-session-start", "claude-code-auth-switch"):
+        (bin_dir / name).symlink_to(tool_bin / name)
+
+    sandbox.run_install("--config", str(sandbox.home / "auth-switch.yaml"))
+
+    assert sorted(p.name for p in bin_dir.iterdir()) == ["claude-modeled", "claude-plain"]

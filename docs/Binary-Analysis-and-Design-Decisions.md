@@ -162,7 +162,7 @@ Checked on 2026-11-16 against Claude Code 2.1.325, by reading the binary and by 
 
 ### Design decision
 
-The installer registers one hook group per profile, identified by the command's file name, and leaves every other `SessionStart` entry alone. The hook writes a single `O_APPEND` line into `<session-id>/auth-switch-profile-starts.jsonl` and creates the directory first. It prints nothing, exits 0 and logs errors to a file. A session that quits before its first prompt leaves a directory that holds only this log. We accept that leak.
+The installer registers one hook group per profile, `cc-auth-switch session-start`, recognizes its own entry by the command, and leaves every other `SessionStart` entry alone. The hook is a subcommand of the one console script. The command imports only the hook module, not yaml or the installer, because it runs on every session start. The hook writes a single `O_APPEND` line into `<session-id>/auth-switch-profile-starts.jsonl` and creates the directory first. It prints nothing, exits 0 and logs errors to a file. A session that quits before its first prompt leaves a directory that holds only this log. We accept that leak.
 
 ## Summary of design decisions
 

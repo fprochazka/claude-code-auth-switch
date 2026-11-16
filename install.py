@@ -3,7 +3,7 @@
 
 import sys
 
-print("install.py is replaced by the claude-code-auth-switch command.", file=sys.stderr)
+print("install.py is replaced by the cc-auth-switch command.", file=sys.stderr)
 print("Install the tool with `uv tool install`, see the README, then run:", file=sys.stderr)
-print("  claude-code-auth-switch install [--sync] [--force]", file=sys.stderr)
+print("  cc-auth-switch install [--sync] [--force]", file=sys.stderr)
 sys.exit(1)

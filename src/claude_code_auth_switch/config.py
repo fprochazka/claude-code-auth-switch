@@ -42,6 +42,12 @@ def load_config(config_path: Path) -> dict:
     if not isinstance(config["profiles"], dict):
         print(f"Error: {config_path}: 'profiles' must be a mapping of profile name to settings", file=sys.stderr)
         sys.exit(1)
+    # A name becomes a directory under profiles_dir and the launcher claude-<name>, so it is checked
+    # here, before the installer writes anything for the profiles that come before it.
+    for name in config["profiles"]:
+        if not isinstance(name, str) or not name or "/" in name or "\0" in name:
+            print(f"Error: {config_path}: profile name {name!r} must be a non-empty string without '/' (quote it in YAML if it is a number)", file=sys.stderr)
+            sys.exit(1)
     return config
 
 

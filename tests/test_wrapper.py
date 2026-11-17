@@ -361,3 +361,19 @@ def test_subcommands_get_no_name(in_tmux, sandbox):
     bin_dir, env = in_tmux
 
     assert json.loads(run_wrapper(bin_dir, env, "modeled", sandbox.home, "mcp", "list").stdout) == ["mcp", "list"]
+
+
+@pytest.mark.parametrize("name", ["123", "a/b", "''"])
+def test_install_refuses_a_profile_name_that_is_no_usable_string_before_writing_anything(sandbox, name):
+    bin_dir = sandbox.home / "bin"
+    config = sandbox.write(
+        "auth-switch.yaml",
+        f"source_dir: {sandbox.mkdir('.claude')}\nbin_dir: {bin_dir}\nprofiles_dir: {sandbox.home / 'profiles'}\nprofiles:\n  first: {{}}\n  {name}: {{}}\n",
+    )
+
+    result = sandbox.run_install("--config", str(config), check=False)
+
+    assert result.returncode == 1
+    assert f"Error: {config}: profile name" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert not bin_dir.exists() and not (sandbox.home / "profiles").exists()

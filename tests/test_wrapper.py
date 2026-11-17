@@ -191,7 +191,9 @@ def test_missing_tool_stops_the_launch(installed, sandbox):
 
     result = run_wrapper(bin_dir, env, "plain", sandbox.home, "-p", "hello")
 
-    assert result.returncode == 127
+    # The launcher's `exec` of a missing file exits 127 in the bash of Linux distributions, and 126 with
+    # "cannot execute: No such file or directory" in the bash on GitHub's macOS runners.
+    assert result.returncode in (126, 127)
     assert result.stdout == ""
 
 

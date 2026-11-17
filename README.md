@@ -591,7 +591,7 @@ fi
 
 ## Developing
 
-The tool is a Python package in `src/claude_code_auth_switch/`, built with hatchling. [uv](https://docs.astral.sh/uv/) manages the environment, and `uv.lock` pins the dependencies. The repository has no CI and no linter config, so the tests that you run locally are the only check before a change reaches users.
+The tool is a Python package in `src/claude_code_auth_switch/`, built with hatchling. [uv](https://docs.astral.sh/uv/) manages the environment, and `uv.lock` pins the dependencies. GitHub Actions runs `.github/workflows/ci.yml` on every push to `master` and on every pull request. It runs ruff and mypy, and the tests on Python 3.10 to 3.15 on Linux and macOS. The macOS jobs cover the tests, not a real Claude Code login, so the [macOS notes](#macos-and-wsl-notes) still apply.
 
 ### Commit hooks
 
@@ -614,11 +614,23 @@ uv run pytest
 
 `uv run` installs the package into the project environment, so the tests find `cc-auth-switch` on `PATH`.
 
-The package supports Python 3.10 and newer. uv runs the tests on the newest Python it finds, and Python 3.14 evaluates annotations lazily, so code that fails to import on an older Python can still pass there. Run the tests on the oldest supported version too:
+The package supports Python 3.10 and newer. uv runs the tests on the newest Python it finds, and Python 3.14 evaluates annotations lazily, so code that fails to import on an older Python can still pass there. CI runs every supported version. To catch such a failure before you push, run the tests on the oldest one too:
 
 ```bash
 uv run --isolated --python 3.10 pytest
 ```
+
+### Linters
+
+CI fails when any of these fails:
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+```
+
+`uv run ruff format .` and `uv run ruff check --fix .` fix most findings. mypy runs in strict mode on `src/` and `tests/`. Test functions and fixtures may stay unannotated, through an override in `pyproject.toml` that lists each test module by name, because `tests/` has no `__init__.py`. When you add a test file, add its module name to that list, or mypy reports every unannotated function in it.
 
 ### Trying a change locally
 
@@ -644,8 +656,9 @@ An unexpected error in `start` prints one line instead of a traceback. To get th
 
 The tool has no releases: no version bumps, no tags, no PyPI package and no GitHub releases. The version in `pyproject.toml` stays at `0.1.0`. A change reaches users when it lands on `master`:
 
-1. Run the tests on the default Python and on Python 3.10, see [Tests](#tests).
-2. Push the commit to `master`. Nothing runs after the push, because the repository has no CI.
+1. Run the tests on the default Python and on Python 3.10, see [Tests](#tests), and the [linters](#linters).
+2. Push the commit to `master`.
+3. Check that the CI run of the commit is green, for example with `gh run list --branch master`. A red run on `master` is the next thing to fix.
 
 Users then update in two steps:
 

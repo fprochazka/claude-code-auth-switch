@@ -17,8 +17,7 @@ from legacy_wrapper import generate_wrapper_script
 FAKE_CLAUDE = """\
 #!/usr/bin/env python3
 import json, os, sys
-keep = ("CLAUDE_", "ANTHROPIC_", "FP_", "OTEL_", "CLOUD_ML_", "MAX_", "TMUX")
-print(json.dumps({"argv": sys.argv[1:], "env": {k: v for k, v in sorted(os.environ.items()) if k.startswith(keep)}}))
+print(json.dumps({"argv": sys.argv[1:], "env": dict(sorted(os.environ.items()))}))
 """
 
 FAKE_TMUX = """\
@@ -61,8 +60,9 @@ ARGUMENTS = [
     ["--resume"], ["-r", "abc"], ["--name=mine"], ["-c"], ["mcp", "list"], ["--add-dir", "/x", "-p", "two words"], ["-p", "--model"],
 ]
 
-# Inherited variables that both must drop or replace.
-INHERITED = {"CLAUDE_CODE_ENTRYPOINT": "cli", "ANTHROPIC_API_KEY": "leak", "CLAUDE_CONFIG_DIR": "/wrong", "FP_CC_AUTH_SWITCH_PROFILE": "wrong"}
+# Inherited variables that both must drop, replace, or pass through unchanged.
+INHERITED = {"CLAUDE_CODE_ENTRYPOINT": "cli", "ANTHROPIC_API_KEY": "leak", "CLAUDE_CONFIG_DIR": "/wrong", "FP_CC_AUTH_SWITCH_PROFILE": "wrong",
+             "_": "/usr/bin/env", "OLDPWD": "/somewhere", "SHLVL": "3", "TERM": "xterm-256color", "UNRELATED_TOKEN": "a b $c `d`"}
 
 
 @pytest.fixture(scope="module")
@@ -120,5 +120,11 @@ def test_start_launches_claude_like_the_legacy_wrapper(launchers, profile, place
     cwd, place_env = places[place]
     for args in ARGUMENTS:
         launched = launch(bin_dir, profile, args, cwd, {**env, **place_env})
-        assert launched == launch(legacy_bin, profile, args, cwd, {**env, **place_env}), args
-        assert launched["stdout"]["env"]["FP_CC_AUTH_SWITCH_PROFILE"] == profile
+        legacy = launch(legacy_bin, profile, args, cwd, {**env, **place_env})
+        # Every variable must match, apart from `_`: bash sets it to the last argument of the previous
+        # command, and the legacy wrapper ran many commands before its exec.
+        new_env, legacy_env = launched["stdout"].pop("env"), legacy["stdout"].pop("env")
+        new_env.pop("_", None), legacy_env.pop("_", None)
+        assert launched == legacy, args
+        assert {key: (new_env.get(key), legacy_env.get(key)) for key in new_env.keys() | legacy_env.keys() if new_env.get(key) != legacy_env.get(key)} == {}, args
+        assert new_env["FP_CC_AUTH_SWITCH_PROFILE"] == profile

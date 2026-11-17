@@ -377,3 +377,17 @@ def test_install_refuses_a_profile_name_that_is_no_usable_string_before_writing_
     assert f"Error: {config}: profile name" in result.stderr
     assert "Traceback" not in result.stderr
     assert not bin_dir.exists() and not (sandbox.home / "profiles").exists()
+
+
+def run_start(sandbox, env, cwd, *args):
+    return subprocess.run(["cc-auth-switch", "start", *args], cwd=cwd, env=env, capture_output=True, text=True)
+
+
+def test_start_accepts_config_with_equals_sign(installed, sandbox):
+    bin_dir, env = installed
+
+    result = run_start(sandbox, env, sandbox.home, f"--config={sandbox.home / 'auth-switch.yaml'}", "modeled", "-p", "x")
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)[-2:] == ["--model", "sonnet"]
+

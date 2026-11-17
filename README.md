@@ -18,7 +18,7 @@ Run them in parallel across different project directories without credential col
 
 Claude Code's `CLAUDE_CONFIG_DIR` environment variable redirects all configuration and credential storage to a custom directory. We [verified in the binary](docs/Binary-Analysis-and-Design-Decisions.md) that this provides **full isolation** — including the `~/.claude.json` state file, which contrary to [some reports](docs/Gemini-Symlink-Behavior-Research.md) is **not** hardcoded to the home directory.
 
-The `cc-auth-switch install` command reads `~/.claude/auth-switch.yaml`, creates a profile directory per account under `~/.claude-profiles/`, and generates thin wrapper scripts that set the right environment variables before `exec`-ing `claude`:
+The `cc-auth-switch install` command reads `~/.claude/auth-switch.yaml`, creates a profile directory per account under `~/.claude-profiles/`, and puts a `claude-<name>` launcher for each profile into `~/.local/bin`. A launcher is one line, `exec /home/you/.local/bin/cc-auth-switch start --config /home/you/.claude/auth-switch.yaml <name> "$@"`, with the paths that `install` saw. On every launch, `cc-auth-switch start` reads the config and the secrets file, sets the environment and the arguments for the profile, and replaces itself with `claude`:
 
 ```
 ~/.claude/
@@ -45,6 +45,8 @@ The `cc-auth-switch install` command reads `~/.claude/auth-switch.yaml`, creates
     └── ...
 ```
 
+**Why read the config on every launch?** A change to `env`, `model`, `add_dirs`, `pinned_models` or the secrets file applies at the next launch without a reinstall, and the launch logic lives in Python where it can be tested. It costs two things. Each launch takes about 10 ms longer than the bash wrappers of earlier versions, measured on Linux. A broken config or a broken tool install now stops every `claude-*` command, where static wrappers kept working. `cc-auth-switch start` never falls back to a plain `claude`, because that would start Claude under the wrong account: it prints the config path and the error and exits with a non-zero status. See [`cc-auth-switch start`](#cc-auth-switch-start-profile).
+
 **Why copy some files and symlink others?** Claude Code uses atomic writes (write-to-temp + `fs.rename`) for config files like `settings.json`. This replaces symlinks with regular files, breaking the link. Directory symlinks are unaffected — files created inside a symlinked directory are real files in the target. See [design decisions](docs/Binary-Analysis-and-Design-Decisions.md) for details.
 
 ## Requirements
@@ -52,7 +54,7 @@ The `cc-auth-switch install` command reads `~/.claude/auth-switch.yaml`, creates
 - Linux. macOS and WSL are untested, see [macOS and WSL notes](#macos-and-wsl-notes).
 - [uv](https://docs.astral.sh/uv/). It installs the tool with its own Python 3.10+ and PyYAML, so the system Python does not matter. This includes macOS, where `/usr/bin/python3` is 3.9.
 - Claude Code installed and available as `claude` on your `$PATH`
-- `~/.local/bin` on your `$PATH`. `uv tool install` puts the tool's commands there, and the wrappers go there unless you configure a different `bin_dir`.
+- `~/.local/bin` on your `$PATH`. `uv tool install` puts the tool's commands there, and the launchers go there unless you configure a different `bin_dir`.
 
 ## Installation
 
@@ -62,7 +64,7 @@ The `cc-auth-switch install` command reads `~/.claude/auth-switch.yaml`, creates
    uv tool install git+https://github.com/fprochazka/claude-code-auth-switch.git
    ```
 
-   This puts one command into `~/.local/bin`: `cc-auth-switch`. The wrappers run `cc-auth-switch attribution`, and the profiles' `settings.json` runs `cc-auth-switch session-start`, both by the absolute path that `cc-auth-switch` had at install time.
+   This puts one command into `~/.local/bin`: `cc-auth-switch`. The launchers run `cc-auth-switch start`, and the profiles' `settings.json` runs `cc-auth-switch session-start`, both by the absolute path that `cc-auth-switch` had at install time.
 
    If you used the older `python3 install.py`, it left a copy of the attribution helper in `bin_dir` as `claude-auth-switch-attribution`. `cc-auth-switch install` removes it when its content matches a version that `install.py` wrote, and otherwise warns and leaves it.
 
@@ -102,7 +104,7 @@ The `cc-auth-switch install` command reads `~/.claude/auth-switch.yaml`, creates
          CLOUD_ML_REGION: "europe-west1"
    ```
 
-4. **Create the profiles and wrappers:**
+4. **Create the profiles and launchers:**
 
    ```bash
    cc-auth-switch install
@@ -143,9 +145,9 @@ This works because each profile has its own `CLAUDE_CONFIG_DIR` (no credential c
 
 ### Session names in tmux
 
-Inside tmux, the wrapper names a new session after the tmux session and pane: `--name "<tmux session>-p<pane number>"`, for example `api-service-p12` for pane `%12`. Other sessions can then address it by that name with `SendMessage`, which is useful together with [shared sessions](#sharing-sessions-between-profiles).
+Inside tmux, the launcher names a new session after the tmux session and pane: `--name "<tmux session>-p<pane number>"`, for example `api-service-p12` for pane `%12`. Other sessions can then address it by that name with `SendMessage`, which is useful together with [shared sessions](#sharing-sessions-between-profiles).
 
-The wrapper adds no name when you pass `-n`/`--name` yourself, and none when you resume or continue a session (`-r`/`--resume`, `-c`/`--continue`, `--session-id`, `--fork-session`, `--from-pr`). A name given at launch replaces the saved title of a resumed session, including one set with `/rename`. When `tmux display-message` fails, the session starts without a name. Subcommands such as `claude-work-team mcp list` never get a name, because they reject the option.
+The launcher adds no name when you pass `-n`/`--name` yourself, and none when you resume or continue a session (`-r`/`--resume`, `-c`/`--continue`, `--session-id`, `--fork-session`, `--from-pr`). A name given at launch replaces the saved title of a resumed session, including one set with `/rename`. When `tmux display-message` fails, the session starts without a name. Subcommands such as `claude-work-team mcp list` never get a name, because they reject the option.
 
 ### Additional directories
 
@@ -173,13 +175,13 @@ profiles:
       opus: claude-opus-4-8
 ```
 
-Under the hood each entry becomes an `ANTHROPIC_DEFAULT_<CLASS>_MODEL` alias-resolution environment variable (`ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_DEFAULT_FABLE_MODEL`) exported by the generated wrapper. An explicit `env:` entry for the same variable wins over the `pinned_models`-derived value, so you can always override a single class by hand. Any class key outside the four valid ones, or an empty/non-string version, aborts the install with a clear error.
+Under the hood each entry becomes an `ANTHROPIC_DEFAULT_<CLASS>_MODEL` alias-resolution environment variable (`ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_DEFAULT_FABLE_MODEL`) that `cc-auth-switch start` sets. An explicit `env:` entry for the same variable wins over the `pinned_models`-derived value, so you can always override a single class by hand. Any class key outside the four valid ones, or an empty/non-string version, stops the install and every launch of the profile with an error.
 
-These variables only take effect when you launch through the generated `claude-<name>` wrapper — they are exported by the wrapper, not written into `settings.json`, so running plain `claude` is unaffected.
+These variables only take effect when you launch through the `claude-<name>` launcher. They are set at launch, not written into `settings.json`, so running plain `claude` is unaffected.
 
 ### Secrets
 
-The main config is meant to be committed. An API key inside an `env:` entry is not. Put those values in a secrets file that sits next to the main config and carries the same stem: `~/.claude/auth-switch.secrets.yaml` for the default location, `config.secrets.yaml` for the legacy one. The installer loads it when it exists, and runs normally when it does not.
+The main config is meant to be committed. An API key inside an `env:` entry is not. Put those values in a secrets file that sits next to the main config and carries the same stem: `~/.claude/auth-switch.secrets.yaml` for the default location, `config.secrets.yaml` for the legacy one. The installer and every launch read it when it exists, and run normally when it does not.
 
 ```yaml
 # ~/.claude/auth-switch.secrets.yaml
@@ -189,11 +191,11 @@ profiles:
       OTEL_EXPORTER_OTLP_HEADERS: "dd-api-key=<your-api-key>"
 ```
 
-The file has the same shape as the main config, restricted to one thing: `profiles.<name>.env` with string values. Any other top-level key, any other key inside a profile, a profile name that the main config does not define, or a non-string env value aborts the install with an error naming the offending key.
+The file has the same shape as the main config, restricted to one thing: `profiles.<name>.env` with string values. Any other top-level key, any other key inside a profile, a profile name that the main config does not define, or a non-string env value stops the install and every launch with an error naming the offending key.
 
-Secret env vars merge into the profile's `env` before the wrapper is written, and behave exactly like main-config env vars — they win over a value derived from `pinned_models`. Defining the same variable in both files is a fatal error instead of a silent precedence rule. The message names the profile and the variable, never the value.
+Secret env vars merge into the profile's `env` at every launch, and behave exactly like main-config env vars — they win over a value derived from `pinned_models`. Defining the same variable in both files is a fatal error instead of a silent precedence rule. The message names the profile and the variable, never the value.
 
-The installer also refuses to use a secrets file that git could publish. Two checks run before the file is read:
+The installer and `cc-auth-switch start` also refuse to use a secrets file that git could publish. Two checks run before the file is read:
 
 1. The file is **tracked** in git → error. Remove it from the index with `git rm --cached`, then ignore it.
 2. The file is inside a git repository and **not ignored** → error. Add its name to `.gitignore`.
@@ -220,7 +222,7 @@ The commit and PR attribution can also come from git config, so it follows the d
     sessionUrl = false
 ```
 
-At launch, every wrapper runs `cc-auth-switch attribution "$PWD"`, by the absolute path that `cc-auth-switch` had at install time. When the command finds any of the keys, the wrapper passes them as `claude --settings '{"attribution": {...}}'`. The keys are the same as in the profile's `attribution`: `commit` and `pr` are strings, where an empty string turns the attribution off, and `sessionUrl` is a git boolean (`true`/`yes`/`on`/`1`, `false`/`no`/`off`/`0`). An invalid boolean or an unknown key prints a warning and is ignored. A key that is not set stays unset, so Claude Code falls back to the next source for it.
+At launch, `cc-auth-switch start` reads the section for the start directory, `$PWD`. When it finds any of the keys, it passes them as `claude --settings '{"attribution": {...}}'`. To see what a directory gets, run `cc-auth-switch attribution <directory>`. The keys are the same as in the profile's `attribution`: `commit` and `pr` are strings, where an empty string turns the attribution off, and `sessionUrl` is a git boolean (`true`/`yes`/`on`/`1`, `false`/`no`/`off`/`0`). An invalid boolean or an unknown key prints a warning and is ignored. A key that is not set stays unset, so Claude Code falls back to the next source for it.
 
 Which config applies depends on where you start Claude:
 
@@ -231,9 +233,9 @@ Precedence, per key: git config wins over the profile's `attribution` in `auth-s
 
 The attribution is fixed when Claude starts. A session started in a personal repository keeps the personal attribution even when it later works in a company directory added with `--add-dir`. Start Claude in the directory whose attribution you want.
 
-Subcommands such as `claude-personal mcp list` do not get the setting. If you pass your own `--settings` to a wrapper, the wrapper does not add its own, because Claude Code keeps only the last `--settings` flag instead of merging them. Put the attribution into your settings file when you need both.
+Subcommands such as `claude-personal mcp list` do not get the setting. If you pass your own `--settings` to a launcher, the launcher does not add its own, because Claude Code keeps only the last `--settings` flag instead of merging them. Put the attribution into your settings file when you need both.
 
-If `cc-auth-switch` is missing or the command fails, the wrapper prints a one-line warning and starts Claude without the git config attribution.
+If git cannot read the config, the launcher prints a one-line warning and starts Claude without the git config attribution.
 
 ### Plugins
 
@@ -266,7 +268,7 @@ On every start, resume, `/clear`, compaction and fork, the hook appends one line
 - `ts` is the time in epoch milliseconds.
 - `pid` is the Claude Code process, the one that writes `sessions/<pid>.json`. It is `null` when the hook cannot find it.
 - `source` is `startup`, `resume`, `clear`, `compact` or `fork`.
-- `profile` and `config_dir` come from `FP_CC_AUTH_SWITCH_PROFILE` and `CLAUDE_CONFIG_DIR`, and are `null` when a session starts without a wrapper.
+- `profile` and `config_dir` come from `FP_CC_AUTH_SWITCH_PROFILE` and `CLAUDE_CONFIG_DIR`, and are `null` when a session starts without a launcher.
 
 [cc-blackbox](https://github.com/fprochazka/cc-blackbox) reads this file. Treat the format as a contract: a change needs a new `v`.
 
@@ -319,12 +321,12 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | Field | Default | Description |
 |-------|---------|-------------|
 | `source_dir` | `~/.claude` | Directory to copy/symlink shared config from |
-| `bin_dir` | `~/.local/bin` | Where to install the wrapper scripts |
+| `bin_dir` | `~/.local/bin` | Where to install the `claude-<name>` launchers |
 | `profiles_dir` | `~/.claude-profiles` | Where to create the per-profile config directories. `~` is expanded. | Only the profiles listed in the config are managed: the installer never reads for writing, changes or deletes anything in another directory under `profiles_dir`.
 | `profiles.<name>.description` | `""` | Human-readable profile description |
 | `profiles.<name>.model` | | Default model to use (e.g., `sonnet`, `opus`). Overridden by `--model` on the command line. |
-| `profiles.<name>.pinned_models` | `{}` | Map of model class (`sonnet`, `opus`, `haiku`, `fable`) to a specific version id. Emitted as `ANTHROPIC_DEFAULT_<CLASS>_MODEL` env vars in the wrapper. See [Pinned model versions](#pinned-model-versions). |
-| `profiles.<name>.env` | `{}` | Environment variables to set before launching Claude |
+| `profiles.<name>.pinned_models` | `{}` | Map of model class (`sonnet`, `opus`, `haiku`, `fable`) to a specific version id. Set as `ANTHROPIC_DEFAULT_<CLASS>_MODEL` env vars at launch. See [Pinned model versions](#pinned-model-versions). |
+| `profiles.<name>.env` | `{}` | Environment variables to set before launching Claude. Values are passed as written, without shell expansion of `$` or backticks. |
 | `profiles.<name>.add_dirs` | `[]` | Additional directories to pass via `--add-dir` |
 | `profiles.<name>.attribution` | | Attribution settings object patched into the profile's `settings.json` on every install. A `[claude-code "attribution"]` git config section overrides it per key, see [Attribution from git config](#attribution-from-git-config). |
 | `profiles.<name>.attribution.commit` | | Attribution text appended to git commit messages |
@@ -348,6 +350,26 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | `--sync` | Re-copy mutable files from source. If a profile file has diverged (contains changes not in source), shows a diff and exits — prompting you to merge first |
 | `--sync --force` | Force overwrite of diverged profile files without prompting. Each replaced file is backed up first and kept until you delete it, as with every file that an install changes, see [Re-syncing after config changes](#re-syncing-after-config-changes) |
 
+### `cc-auth-switch start <profile>`
+
+```bash
+cc-auth-switch start [--config PATH] <profile> [claude arguments...]
+```
+
+The `claude-<name>` launchers run this command with the `--config` path that `install` used. Everything after the profile goes to `claude` unchanged. In this order, `start`:
+
+1. Reads the config and the secrets file, and resolves the profile's `env`, `pinned_models`, `model` and `add_dirs`.
+2. Drops every inherited `CLAUDE_*` and `ANTHROPIC_*` variable, so a launch from inside another Claude Code session does not inherit its account. Then it sets `CLAUDE_CONFIG_DIR`, `FP_CC_AUTH_SWITCH_PROFILE` and the profile's `env`.
+3. Passes the arguments through unchanged when the first one is a Claude Code subcommand such as `mcp`, `auth` or `plugin`, because subcommands reject the session options.
+4. Otherwise adds `--add-dir` for each `add_dirs` entry, `--settings` with the [attribution from git config](#attribution-from-git-config), the [tmux session name](#session-names-in-tmux) and `--model`, each unless you passed the same option yourself.
+5. Replaces itself with `claude`.
+
+A config that is missing, cannot be parsed, or fails validation stops the launch. So does a profile that the config no longer defines, and a secrets file that is invalid, unreadable or not ignored by git. `start` then prints the config path and the error and exits with a non-zero status, without starting Claude. Fix the config and launch again; a reinstall is only needed for the settings that `install` writes into the profile directory.
+
+| Flag | Description |
+|------|-------------|
+| `--config PATH` | Config file path, as for `install` |
+
 ### `cc-auth-switch rollback-sessions <profile>`
 
 | Flag | Description |
@@ -361,7 +383,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | **Copied** | `settings.json`, `settings.local.json`, `keybindings.json`, and all top-level `*.md` files (e.g. `CLAUDE.md`) | Copied on first install. Use `--sync` to refresh from source. |
 | **Symlinked** | `commands/`, `skills/`, `agents/`, `plugins/`, `projects/`, `scripts/` | Always symlinked. Changes are shared across all profiles. |
 | **Patched** | `settings.json` (`attribution`, `plansDirectory`, `hooks.SessionStart`) | Set from profile config on every install. The installer creates the file when `source_dir` has none. See [Profile start log](#profile-start-log) for the hook. |
-| **Per launch** | `--settings` (`attribution`) | Read from git config for the start directory every time a wrapper starts Claude. Never written to disk. See [Attribution from git config](#attribution-from-git-config). |
+| **Per launch** | `--settings` (`attribution`) | Read from git config for the start directory every time a launcher starts Claude. Never written to disk. See [Attribution from git config](#attribution-from-git-config). |
 | **Synced on every install** | `settings.json` (`enabledPlugins`, `extraKnownMarketplaces`) | Copied whole from `source_dir`'s `settings.json`, then the profile's `plugins:` overrides are applied. See [Plugins](#plugins). |
 | **Selectively synced** | `.claude.json` (`mcpServers`) | Only the `mcpServers` key is synced from `~/.claude.json` on every install. Other keys in `.claude.json` are per-profile state. |
 | **Shared on request** | `sessions/` | A real per-profile directory by default. With `share_sessions: true`, a symlink to `~/.claude/sessions`. |
@@ -370,8 +392,9 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 ## Re-syncing after config changes
 
 ```bash
-# Edited ~/.claude/auth-switch.yaml or ~/.claude/auth-switch.secrets.yaml → re-run install
-# (also syncs mcpServers from ~/.claude.json into each profile)
+# Added or removed a profile, or changed attribution, plansDirectory, plugins or share_sessions → re-run install
+# (also syncs mcpServers from ~/.claude.json into each profile).
+# env, model, add_dirs, pinned_models and the secrets file apply at the next launch without it.
 cc-auth-switch install
 
 # Changed ~/.claude/settings.json and want profiles to pick it up
@@ -392,11 +415,11 @@ The installer is idempotent:
 - `--sync` detects diverged files (profile has changes not in source) and shows a diff before overwriting
 - Symlinks are updated if their target changed
 - `mcpServers` from `~/.claude.json` are synced into each profile on every run (not just `--sync`)
-- Stale wrapper scripts (from removed profiles) are automatically cleaned up
+- Launchers of removed profiles, and the bash wrappers that earlier versions generated, are removed
 
 ## Vertex AI notes
 
-When using a Vertex AI profile, the wrapper script injects the required environment variables (`CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`). Make sure these variables are **not** also set in your `~/.claude/settings.json` `env` section, or they will apply to all profiles (since `settings.json` is copied to each profile).
+When using a Vertex AI profile, the launcher sets the required environment variables (`CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`). Make sure these variables are **not** also set in your `~/.claude/settings.json` `env` section, or they will apply to all profiles (since `settings.json` is copied to each profile).
 
 Authentication uses [Google Cloud Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials):
 
@@ -410,7 +433,7 @@ Nobody has run this tool on macOS or WSL. Everything in this section comes from 
 
 ### macOS
 
-Claude Code on macOS stores the OAuth login in the Keychain and falls back to `.credentials.json` in the config directory. When `CLAUDE_CONFIG_DIR` is set, the Keychain service name gets a suffix: `Claude Code-credentials-<hash>`, where `<hash>` is the first 8 hex characters of the SHA-256 of the `CLAUDE_CONFIG_DIR` value. Without the variable, the name is plain `Claude Code-credentials`. Each wrapper sets a different `CLAUDE_CONFIG_DIR`, so each profile should get its own Keychain entry, and profiles should not overwrite each other's logins. The [Binary Analysis](docs/Binary-Analysis-and-Design-Decisions.md#4-macos-keychain-entry-per-config-directory) doc has the code.
+Claude Code on macOS stores the OAuth login in the Keychain and falls back to `.credentials.json` in the config directory. When `CLAUDE_CONFIG_DIR` is set, the Keychain service name gets a suffix: `Claude Code-credentials-<hash>`, where `<hash>` is the first 8 hex characters of the SHA-256 of the `CLAUDE_CONFIG_DIR` value. Without the variable, the name is plain `Claude Code-credentials`. Each launcher sets a different `CLAUDE_CONFIG_DIR`, so each profile should get its own Keychain entry, and profiles should not overwrite each other's logins. The [Binary Analysis](docs/Binary-Analysis-and-Design-Decisions.md#4-macos-keychain-entry-per-config-directory) doc has the code.
 
 [Issue #20553](https://github.com/anthropics/claude-code/issues/20553) reported that all profiles shared one Keychain entry. That was true in early 2026. A user in that issue confirmed per-directory entries on macOS in Claude Code 2.1.56, but the issue is still open.
 
@@ -424,13 +447,13 @@ security find-generic-password -s "Claude Code-credentials-$hash" -a "$USER"
 Gotchas:
 
 - **The hash covers the exact string.** Claude Code does not expand `~`, strip a trailing slash or resolve symlinks before hashing. If you move `profiles_dir`, or point it at the same directory through a different path, every profile reads as logged out and the old Keychain entries stay behind. The installer writes the expanded absolute path, so re-running it with the same config keeps the same entries.
-- **Never export `CLAUDE_CONFIG_DIR=~/.claude`.** The explicit default path produces a hashed name, not the plain `Claude Code-credentials` entry that your existing login uses, so plain `claude` reads as logged out. The wrappers unset every inherited `CLAUDE_*` variable, so they are not affected. [cenv](https://github.com/lukabudik/cenv) documents the same gotcha.
+- **Never export `CLAUDE_CONFIG_DIR=~/.claude`.** The explicit default path produces a hashed name, not the plain `Claude Code-credentials` entry that your existing login uses, so plain `claude` reads as logged out. The launchers drop every inherited `CLAUDE_*` variable, so they are not affected. [cenv](https://github.com/lukabudik/cenv) documents the same gotcha.
 - **A login in `~/.claude` does not carry over.** Log in once in every profile, as on Linux.
 - **Re-login after a reboot.** One user in issue #20553 reported that macOS blocked reads of the per-directory entries after a restart, because of the entry's access control list. The binary reads the Keychain by running the `security` command (`/usr/bin/security`), which that list allows, so this may not apply. Nobody has checked.
 
 Other macOS differences:
 
-- The wrappers are bash scripts. They run under the bash 3.2 that macOS ships, which was checked in a `bash:3.2` container, not on a Mac.
+- The launchers are one-line bash scripts that `exec` `cc-auth-switch start`, so the bash 3.2 that macOS ships runs them.
 - `~/.local/bin` is not on the macOS `$PATH` by default. Add it, or set `bin_dir` to a directory that is.
 
 ### WSL
@@ -441,18 +464,18 @@ For the browser login, Claude Code runs `$BROWSER`, or `xdg-open` when `$BROWSER
 
 ### Native Windows
 
-Not supported. The wrappers are bash scripts.
+Not supported. The launchers are bash scripts.
 
 ## Environment variables
 
-Each wrapper script exports the following environment variables before launching `claude`:
+`cc-auth-switch start` sets the following environment variables before it runs `claude`:
 
 | Variable | Example | Description |
 |----------|---------|-------------|
 | `CLAUDE_CONFIG_DIR` | `~/.claude-profiles/personal` | Points Claude Code at the profile's isolated config directory |
 | `FP_CC_AUTH_SWITCH_PROFILE` | `personal` | The active profile name — useful in [status line scripts](https://docs.anthropic.com/en/docs/claude-code/settings#status-bar) and hooks |
 
-The `FP_CC_AUTH_SWITCH_PROFILE` variable is intentionally outside the `CLAUDE_*`/`ANTHROPIC_*` namespace so it is not cleared by the wrapper's env-unset logic when nesting sessions. You can use it in your `statusLine` command to display which profile is active:
+The `FP_CC_AUTH_SWITCH_PROFILE` variable is intentionally outside the `CLAUDE_*`/`ANTHROPIC_*` namespace so a nested launch does not drop it together with the inherited `CLAUDE_*`/`ANTHROPIC_*` variables. You can use it in your `statusLine` command to display which profile is active:
 
 ```bash
 # In your status line script:
@@ -512,9 +535,15 @@ To run a checkout as the installed tool, install it as an editable uv tool:
 uv tool install --force --editable .
 ```
 
-An editable install runs whatever the checkout holds at the moment, with no reinstall. Every wrapper and every Claude Code session that you start through one uses it at once, also while the checkout is on a half-finished branch. Make changes in a separate git worktree when your own sessions run from the installed checkout.
+An editable install runs whatever the checkout holds at the moment, with no reinstall. Every launcher and every Claude Code session that you start through one uses it at once, also while the checkout is on a half-finished branch. Make changes in a separate git worktree when your own sessions run from the installed checkout.
 
 To see what `cc-auth-switch install` writes without touching your profiles, run it with `--config` pointing at a temporary `auth-switch.yaml` whose `bin_dir` and `profiles_dir` are temporary directories. Leave `share_sessions` off in that config, because it links `sessions/` to `~/.claude/sessions`.
+
+To see what a launch runs, put a fake `claude` that prints its arguments and environment first on `PATH`, then run `start` with the same temporary config. It needs no `install` before, and it replaces itself with the fake. Inside tmux the output also has the `--name` of your pane.
+
+```bash
+PATH=/tmp/fake-claude-dir:$PATH uv run cc-auth-switch start --config /tmp/auth-switch.yaml work -p hello
+```
 
 ## Releasing
 
@@ -526,7 +555,7 @@ The tool has no releases: no version bumps, no tags, no PyPI package and no GitH
 Users then update in two steps:
 
 1. Update the tool. An install from GitHub updates with `uv tool upgrade claude-code-auth-switch`, or with `uv tool install --reinstall git+https://github.com/fprochazka/claude-code-auth-switch.git`. An editable install updates when you pull its checkout. For an editable install, `uv tool upgrade` only refreshes the dependencies.
-2. Run `cc-auth-switch install`. It regenerates the wrappers and patches each profile's `settings.json`, so they match the new code. The wrappers and the `SessionStart` hook call `cc-auth-switch` at every launch, so a change to `attribution` or `session-start` takes effect without this step. A change to what `install` writes does not.
+2. Run `cc-auth-switch install`. It regenerates the launchers and patches each profile's `settings.json`, so they match the new code. Every launcher runs `cc-auth-switch start`, and the `SessionStart` hook runs `cc-auth-switch session-start`, so a change to either takes effect at the next launch without this step. That covers how `start` reads the config and builds the environment and the arguments: `env`, secrets, `pinned_models`, `model`, `add_dirs`, the git config attribution and the tmux name. A change to what `install` writes still needs this step: the launcher line, the patches to the profiles' `settings.json` (`attribution`, `plansDirectory`, the plugin keys, the hook), the copied and symlinked files, and `sessions/` sharing.
 
 Check the output of `cc-auth-switch install`: it lists what changed under each profile and the path of every backup it made, see [Re-syncing after config changes](#re-syncing-after-config-changes).
 

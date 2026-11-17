@@ -3,7 +3,11 @@
 #
 # Profile names are used to derive:
 #   - Config dir: <profiles_dir>/<name>/
-#   - Wrapper script: <bin_dir>/claude-<name>
+#   - Launcher: <bin_dir>/claude-<name>, which runs `cc-auth-switch start <name>`
+#
+# Every launch reads this file again, so env, model, add_dirs and pinned_models apply at the next
+# launch. Re-run `cc-auth-switch install` after adding or removing a profile or changing the keys
+# that it writes into the profile directory: attribution, plansDirectory, plugins and share_sessions.
 #
 # Secret env values belong in the sibling file auth-switch.secrets.yaml, which must be
 # gitignored. See config.secrets.example.yaml.
@@ -11,7 +15,7 @@
 # Source directory for shared configuration (default: ~/.claude)
 source_dir: ~/.claude
 
-# Install wrapper scripts here (default: ~/.local/bin)
+# Install the claude-<name> launchers here (default: ~/.local/bin)
 bin_dir: ~/.local/bin
 
 # Create profile directories here (default: ~/.claude-profiles)

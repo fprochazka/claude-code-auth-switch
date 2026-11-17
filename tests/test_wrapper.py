@@ -72,12 +72,13 @@ def settings_from_argv(argv: list[str]) -> list[dict]:
 EXPECTED = {"attribution": {"commit": "Line one\n\nCo-Authored-By: Claude <noreply@example.com>", "sessionUrl": False}}
 
 
-def test_wrappers_call_the_helper_by_absolute_path_and_pass_bash_syntax_check(installed, sandbox):
+def test_launchers_exec_start_by_absolute_path_and_pass_bash_syntax_check(installed, sandbox):
     bin_dir, env = installed
     for profile in ("plain", "modeled"):
-        assert f'auth_switch="{sandbox.tool_bin / "cc-auth-switch"}"' in (bin_dir / f"claude-{profile}").read_text()
-    for profile in ("plain", "modeled"):
-        subprocess.run(["bash", "-n", str(bin_dir / f"claude-{profile}")], check=True)
+        launcher = bin_dir / f"claude-{profile}"
+        command = f'exec {sandbox.tool_bin / "cc-auth-switch"} start --config {sandbox.home / "auth-switch.yaml"} {profile} "$@"'
+        assert launcher.read_text().splitlines()[-1] == command
+        subprocess.run(["bash", "-n", str(launcher)], check=True)
 
 
 @pytest.mark.parametrize("profile", ["plain", "modeled"])
@@ -143,29 +144,90 @@ def test_user_settings_flag_replaces_the_wrapper_settings(installed, sandbox, us
     assert argv == user_flag
 
 
-def test_missing_helper_warns_and_launches(installed, sandbox):
+def test_missing_tool_stops_the_launch(installed, sandbox):
     bin_dir, env = installed
     (sandbox.tool_bin / "cc-auth-switch").unlink()
-    repo = sandbox.git_init("devel/projects/company/service")
 
-    result = run_wrapper(bin_dir, env, "plain", repo, "--resume")
+    result = run_wrapper(bin_dir, env, "plain", sandbox.home, "-p", "hello")
 
-    assert result.returncode == 0
-    assert json.loads(result.stdout) == ["--resume"]
-    assert "launching without git config attribution" in result.stderr
+    assert result.returncode == 127
+    assert result.stdout == ""
 
 
-def test_failing_helper_warns_and_launches(installed, sandbox):
+def assert_launch_refused(result: subprocess.CompletedProcess, *expected: str) -> None:
+    assert result.returncode != 0
+    assert result.stdout == "", "claude must not start"
+    for text in expected:
+        assert text in result.stderr
+
+
+def test_unparsable_config_stops_the_launch(installed, sandbox):
     bin_dir, env = installed
-    helper = sandbox.tool_bin / "cc-auth-switch"
-    helper.write_text("#!/bin/sh\necho partial\nexit 3\n")
-    repo = sandbox.git_init("devel/projects/company/service")
+    config = sandbox.home / "auth-switch.yaml"
+    config.write_text(config.read_text() + "  broken: [\n")
 
-    result = run_wrapper(bin_dir, env, "plain", repo, "--resume")
+    assert_launch_refused(run_wrapper(bin_dir, env, "plain", sandbox.home), f"cannot read {config}", "not starting Claude for profile 'plain'")
 
-    assert result.returncode == 0
-    assert json.loads(result.stdout) == ["--resume"]
-    assert "failed, launching without git config attribution" in result.stderr
+
+@pytest.mark.parametrize("profile_yaml, error", [
+    ("    env: [A, B]\n", "profile 'modeled': 'env' must be a mapping"),
+    ("    add_dirs: ~/single\n", "profile 'modeled': 'add_dirs' must be a list of paths"),
+    ("    pinned_models:\n      gpt: x\n", "unknown pinned_models class 'gpt'"),
+])
+def test_invalid_profile_stops_the_launch(installed, sandbox, profile_yaml, error):
+    bin_dir, env = installed
+    config = sandbox.home / "auth-switch.yaml"
+    config.write_text(config.read_text() + profile_yaml)
+
+    assert_launch_refused(run_wrapper(bin_dir, env, "modeled", sandbox.home), error, str(config))
+
+
+def test_removed_profile_stops_the_launch(installed, sandbox):
+    bin_dir, env = installed
+    config = sandbox.home / "auth-switch.yaml"
+    config.write_text(config.read_text().split("  modeled:")[0])
+
+    assert_launch_refused(run_wrapper(bin_dir, env, "modeled", sandbox.home), f"{config}: profile 'modeled' is not defined")
+
+
+def test_missing_config_stops_the_launch(installed, sandbox):
+    bin_dir, env = installed
+    config = sandbox.home / "auth-switch.yaml"
+    config.unlink()
+
+    assert_launch_refused(run_wrapper(bin_dir, env, "plain", sandbox.home), f"{config}: the file does not exist")
+
+
+def test_secrets_file_that_git_would_publish_stops_the_launch(installed, sandbox):
+    bin_dir, env = installed
+    sandbox.git_init(".")
+    secrets = sandbox.write("auth-switch.secrets.yaml", 'profiles:\n  plain:\n    env:\n      KEY: "value"\n')
+
+    assert_launch_refused(run_wrapper(bin_dir, env, "plain", sandbox.home), f"Secrets file {secrets} is inside a git repository but is not ignored", str(sandbox.home / "auth-switch.yaml"))
+
+
+def test_invalid_secrets_file_stops_the_launch(installed, sandbox):
+    bin_dir, env = installed
+    secrets = sandbox.write("auth-switch.secrets.yaml", "profiles:\n  plain:\n    model: opus\n")
+
+    assert_launch_refused(run_wrapper(bin_dir, env, "plain", sandbox.home), f"{secrets}: profile 'plain' may only contain 'env'")
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads files regardless of their mode")
+def test_unreadable_secrets_file_stops_the_launch(installed, sandbox):
+    bin_dir, env = installed
+    secrets = sandbox.write("auth-switch.secrets.yaml", "profiles: {}\n")
+    secrets.chmod(0)
+
+    assert_launch_refused(run_wrapper(bin_dir, env, "plain", sandbox.home), f"cannot read {secrets}")
+
+
+def test_config_changes_apply_without_reinstalling(installed, sandbox):
+    bin_dir, env = installed
+    config = sandbox.home / "auth-switch.yaml"
+    config.write_text(config.read_text().replace("model: sonnet", "model: opus"))
+
+    assert json.loads(run_wrapper(bin_dir, env, "modeled", sandbox.home, "-p", "x").stdout)[-2:] == ["--model", "opus"]
 
 
 def test_install_fails_when_the_helper_is_not_on_path(installed, sandbox):

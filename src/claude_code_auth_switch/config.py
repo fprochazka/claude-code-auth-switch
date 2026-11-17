@@ -21,11 +21,23 @@ DEFAULT_PROFILES_DIR = Path("~/.claude-profiles").expanduser()
 VALID_MODEL_CLASSES = ("sonnet", "opus", "haiku", "fable")
 
 
+def read_yaml(path: Path) -> object:
+    """Parse a YAML file; an unreadable file or a syntax error stops the run with the path and the error."""
+    try:
+        with open(path) as f:
+            return yaml.safe_load(f)
+    except (OSError, yaml.YAMLError) as error:
+        print(f"Error: cannot read {path}: {error}", file=sys.stderr)
+        sys.exit(1)
+
+
 def load_config(config_path: Path) -> dict:
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
-    if not config or "profiles" not in config:
+    config = read_yaml(config_path)
+    if not isinstance(config, dict) or "profiles" not in config:
         print(f"Error: No profiles defined in {config_path}", file=sys.stderr)
+        sys.exit(1)
+    if not isinstance(config["profiles"], dict):
+        print(f"Error: {config_path}: 'profiles' must be a mapping of profile name to settings", file=sys.stderr)
         sys.exit(1)
     return config
 
@@ -100,8 +112,7 @@ def load_secrets(secrets_path: Path, config: dict) -> dict[str, dict[str, str]]:
     The file mirrors the main config but allows only profiles.<name>.env with string values.
     Anything else aborts the install, so a typo cannot silently drop a credential.
     """
-    with open(secrets_path) as f:
-        data = yaml.safe_load(f)
+    data = read_yaml(secrets_path)
     if data is None:
         return {}
 

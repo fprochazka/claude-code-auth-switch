@@ -7,10 +7,14 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
-    # Every wrapper runs `attribution` at launch, and Claude Code runs `session-start` on every
-    # session start. Both skip argparse and import only their own module; yaml and the installer stay
-    # unloaded on these paths.
+    # Every launcher runs `start`, and Claude Code runs `session-start` on every session start. They
+    # skip argparse and import only what they need; the installer stays unloaded on these paths.
+    # `start` passes everything after the profile to Claude unchanged, so argparse must not see it.
     command = argv[0] if argv else None
+    if command == "start":
+        from claude_code_auth_switch import launcher
+
+        return launcher.main(argv[1:])
     if command == "attribution":
         from claude_code_auth_switch import git_attribution
 
@@ -37,11 +41,11 @@ def run_management_command(argv: list[str]) -> int:
 
     parser = argparse.ArgumentParser(
         prog=PROG,
-        description="Manage Claude Code profiles: isolated config directories and claude-<name> wrapper scripts",
+        description="Manage Claude Code profiles: isolated config directories and claude-<name> launchers",
     )
     commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
-    install_parser = commands.add_parser("install", help="Create the profile directories and install the wrapper scripts")
+    install_parser = commands.add_parser("install", help="Create the profile directories and install the claude-<name> launchers")
     add_config_argument(install_parser)
     install_parser.add_argument(
         "--sync",
@@ -54,8 +58,13 @@ def run_management_command(argv: list[str]) -> int:
         help="Force overwrite of diverged profile files (use with --sync)",
     )
     commands.add_parser(
+        "start",
+        help="Start Claude Code with a profile (run by the claude-<profile> launchers)",
+        usage=f"{PROG} start [--config PATH] PROFILE [CLAUDE ARGUMENTS...]",
+    )
+    commands.add_parser(
         "attribution",
-        help="Print the attribution settings from git config for a directory (run by the wrappers)",
+        help="Print the attribution settings from git config for a directory, as start passes them to Claude",
         usage=f"{PROG} attribution [DIRECTORY]",
     )
     commands.add_parser(

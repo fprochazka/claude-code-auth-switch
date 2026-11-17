@@ -1,9 +1,9 @@
 """
 Print the Claude Code attribution settings that the user's git config sets for a directory.
 
-The package exposes this module as `cc-auth-switch attribution`, and every generated wrapper
-runs it by absolute path at launch. The output is either empty or a JSON object
-for `claude --settings`:
+`cc-auth-switch start` calls settings_for() on every launch, and the package exposes the module as
+`cc-auth-switch attribution` to show the result for a directory. The output is either empty or a JSON
+object for `claude --settings`:
 
     {"attribution": {"commit": "...", "pr": "...", "sessionUrl": true}}
 

@@ -55,7 +55,10 @@ def load_config(config_path: Path) -> dict:
     # here, before the installer writes anything for the profiles that come before it.
     for name in config["profiles"]:
         if not isinstance(name, str) or not name or "/" in name or "\0" in name:
-            print(f"Error: {config_path}: profile name {name!r} must be a non-empty string without '/' (quote it in YAML if it is a number)", file=sys.stderr)
+            print(
+                f"Error: {config_path}: profile name {name!r} must be a non-empty string without '/' (quote it in YAML if it is a number)",
+                file=sys.stderr,
+            )
             sys.exit(1)
     return config
 
@@ -106,8 +109,14 @@ def check_secrets_git_safety(secrets_path: Path) -> None:
         except FileNotFoundError:
             return None
         except subprocess.TimeoutExpired:
-            print(f"Error: git did not answer within {GIT_TIMEOUT_SECONDS} seconds while checking whether secrets file {secrets_path} is tracked or ignored.", file=sys.stderr)
-            print(f"Without that check the file cannot be shown safe. Run `git -C {directory} status` to see why git hangs.", file=sys.stderr)
+            print(
+                f"Error: git did not answer within {GIT_TIMEOUT_SECONDS} seconds while checking whether secrets file {secrets_path} is tracked or ignored.",
+                file=sys.stderr,
+            )
+            print(
+                f"Without that check the file cannot be shown safe. Run `git -C {directory} status` to see why git hangs.",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
     tracked = run("ls-files", "--error-unmatch", name)

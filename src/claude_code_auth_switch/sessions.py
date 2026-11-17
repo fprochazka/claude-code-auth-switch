@@ -150,7 +150,9 @@ def write_copy(target: Path, data: bytes, source_stat: os.stat_result) -> Copied
     return Copied(len(data), source_stat.st_mtime_ns, hashlib.sha256(data).digest())
 
 
-def copy_newer(source_dir: Path, target_dir: Path, names: set[str] | None = None, copied: CopyRecord | None = None) -> list[str]:
+def copy_newer(
+    source_dir: Path, target_dir: Path, names: set[str] | None = None, copied: CopyRecord | None = None
+) -> list[str]:
     """Copy regular files whose copy in target_dir is missing or older, keeping the mtime.
 
     With `copied`, the caller's record of what earlier passes wrote into target_dir, one more case
@@ -339,7 +341,11 @@ def owner_from_log(pid: int, target: Path, profile_dir: Path, profile_name: str)
                 line = json.loads(raw)
             except ValueError:
                 continue
-            if isinstance(line, dict) and line.get("pid") == pid and (latest is None or line.get("ts", 0) >= latest.get("ts", 0)):
+            if (
+                isinstance(line, dict)
+                and line.get("pid") == pid
+                and (latest is None or line.get("ts", 0) >= latest.get("ts", 0))
+            ):
                 latest = line
     if latest is None:
         return None
@@ -427,7 +433,9 @@ def rollback(profile_name: str, profile_dir: Path, target: Path, settle: float =
     if not (live.is_symlink() and same_path(live, target)):
         raise SessionsError(f"{live} is not a symlink to {target}, so there is nothing to roll back")
     if staged.is_symlink() or staged.exists():
-        raise SessionsError(f"{staged} is left over from an interrupted run. Check what it holds and move it out of the way first.")
+        raise SessionsError(
+            f"{staged} is left over from an interrupted run. Check what it holds and move it out of the way first."
+        )
 
     owned = find_owned(target, profile_dir, profile_name)
     staged.mkdir(mode=0o700)

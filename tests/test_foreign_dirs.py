@@ -26,7 +26,9 @@ def snapshot(root: Path) -> dict[str, tuple]:
 def foreign(sandbox):
     """A directory under profiles_dir that the config does not list, next to a managed profile."""
     source_dir = sandbox.mkdir(".claude")
-    (source_dir / "settings.json").write_text(json.dumps({"enabledPlugins": {"a@shared": True}, "theme": "dark"}) + "\n")
+    (source_dir / "settings.json").write_text(
+        json.dumps({"enabledPlugins": {"a@shared": True}, "theme": "dark"}) + "\n"
+    )
     (source_dir / "CLAUDE.md").write_text("# Shared\n")
     sandbox.mkdir(".claude/skills")
     (sandbox.home / ".claude.json").write_text(json.dumps({"mcpServers": {"tool": {"command": "tool"}}}) + "\n")
@@ -64,11 +66,19 @@ def test_sharing_and_rolling_back_another_profile_leaves_an_unlisted_directory_a
     config, other = foreign
     sandbox.mkdir("profiles/work-team/sessions")
     (sandbox.home / "profiles" / "work-team" / "sessions" / "100.json").write_text('{"pid": 100}\n')
-    sharing = sandbox.write("sharing.yaml", Path(config).read_text().replace("  work-team: {}\n", "  work-team:\n    share_sessions: true\n"))
+    sharing = sandbox.write(
+        "sharing.yaml",
+        Path(config).read_text().replace("  work-team: {}\n", "  work-team:\n    share_sessions: true\n"),
+    )
     before = snapshot(other)
 
     sandbox.run_install("--config", str(sharing))
     assert (sandbox.home / "profiles" / "work-team" / "sessions").is_symlink()
-    subprocess.run(["cc-auth-switch", "rollback-sessions", "--config", config, "work-team"], env=sandbox.env, check=True, capture_output=True)
+    subprocess.run(
+        ["cc-auth-switch", "rollback-sessions", "--config", config, "work-team"],
+        env=sandbox.env,
+        check=True,
+        capture_output=True,
+    )
 
     assert snapshot(other) == before

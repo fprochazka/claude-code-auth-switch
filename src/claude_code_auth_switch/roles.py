@@ -23,11 +23,27 @@ STRING_KEYS = ("description", "model", "effort", "permission_mode")
 LIST_KEYS = ("tools", "allowed_tools", "disallowed_tools", "add_dirs", "plugin_dirs", "mcp_config", "extra_args")
 # A role's env may not set these. A launch from inside the role's session clears the role's variables,
 # and without these that launch, or the shell it runs in, would break.
-RESERVED_ENV_NAMES = frozenset({
-    "CLAUDE_CONFIG_DIR", "PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "OLDPWD", "SHLVL", "LANG", "TERM", "DISPLAY", "WAYLAND_DISPLAY",
-})
+RESERVED_ENV_NAMES = frozenset(
+    {
+        "CLAUDE_CONFIG_DIR",
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "PWD",
+        "OLDPWD",
+        "SHLVL",
+        "LANG",
+        "TERM",
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+    }
+)
 RESERVED_ENV_PREFIXES = ("FP_CC_AUTH_SWITCH_", "LC_", "TMUX", "XDG_", "SSH_", "LD_")
-KNOWN_KEYS = frozenset((*STRING_KEYS, *LIST_KEYS, "prompt", "autocompact", "settings", "strict_mcp_config", "agents", "env"))
+KNOWN_KEYS = frozenset(
+    (*STRING_KEYS, *LIST_KEYS, "prompt", "autocompact", "settings", "strict_mcp_config", "agents", "env")
+)
 
 
 @dataclass(frozen=True)
@@ -74,7 +90,9 @@ def resolve_role(name: str, role_config: object) -> Role:
     if not isinstance(role_config, dict):
         raise error("must be a mapping of role keys")
     if unknown := sorted(str(key) for key in role_config if key not in KNOWN_KEYS):
-        raise error(f"unknown key {', '.join(repr(key) for key in unknown)} (known keys: {', '.join(sorted(KNOWN_KEYS))})")
+        raise error(
+            f"unknown key {', '.join(repr(key) for key in unknown)} (known keys: {', '.join(sorted(KNOWN_KEYS))})"
+        )
 
     values: dict = {}
     for key in STRING_KEYS:
@@ -138,9 +156,13 @@ def resolve_role(name: str, role_config: object) -> Role:
         raise error("'env' must be a mapping of variable name to value")
     for key, value in env.items():
         if not isinstance(key, str) or not ENV_NAME.fullmatch(key):
-            raise error(f"env variable name {key!r} is not a valid shell variable name (letters, digits and _, not starting with a digit)")
+            raise error(
+                f"env variable name {key!r} is not a valid shell variable name (letters, digits and _, not starting with a digit)"
+            )
         if key in RESERVED_ENV_NAMES or key.startswith(RESERVED_ENV_PREFIXES):
-            raise error(f"env variable '{key}' is reserved: the profile selects the config dir, start sets the FP_CC_AUTH_SWITCH_* variables, and a launch from inside the role's session clears the role's env, which must not break that launch")
+            raise error(
+                f"env variable '{key}' is reserved: the profile selects the config dir, start sets the FP_CC_AUTH_SWITCH_* variables, and a launch from inside the role's session clears the role's env, which must not break that launch"
+            )
         if isinstance(value, bool) or not isinstance(value, (str, int, float)):
             raise error(f"env variable '{key}' must have a string or number value")
         if "\0" in str(value):
@@ -168,7 +190,13 @@ def extra_arg_problem(item: str) -> str | None:
         return None
     if not item.startswith("-"):
         return "is not an option; write a value into its option as --flag=value"
-    option = item if item in KIND else item[:2] if not item.startswith("--") and KIND.get(item[:2], BOOLEAN) != BOOLEAN else None
+    option = (
+        item
+        if item in KIND
+        else item[:2]
+        if not item.startswith("--") and KIND.get(item[:2], BOOLEAN) != BOOLEAN
+        else None
+    )
     if option is not None:
         return f"takes a value; write it as {CANONICAL[option]}=<value>"
     return f"is not an option without a value in Claude Code {CLAUDE_VERSION}; write an option that takes a value as --flag=value"
@@ -205,7 +233,9 @@ def resolve_roles(config: dict) -> dict[str, Role]:
     resolved: dict[str, Role] = {}
     for name, role_config in roles.items():
         if not isinstance(name, str) or not name or "\0" in name:
-            raise ConfigError(f"role name {name!r} must be a non-empty string without NUL characters (quote it in YAML if it is a number)")
+            raise ConfigError(
+                f"role name {name!r} must be a non-empty string without NUL characters (quote it in YAML if it is a number)"
+            )
         if name == NO_ROLE:
             raise ConfigError(f"role name '{NO_ROLE}' is reserved: `--agent-role {NO_ROLE}` starts without a role")
         resolved[name] = resolve_role(name, role_config)

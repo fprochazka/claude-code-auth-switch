@@ -132,7 +132,9 @@ def test_relative_include_path_and_dot_slash_pattern(sandbox):
 
 
 def test_relative_include_path_without_dot_slash(sandbox):
-    sandbox.write(".gitconfig", '[includeIf "gitdir:~/devel/projects/company/"]\n    path = devel/projects/company/.gitconfig\n')
+    sandbox.write(
+        ".gitconfig", '[includeIf "gitdir:~/devel/projects/company/"]\n    path = devel/projects/company/.gitconfig\n'
+    )
     sandbox.write("devel/projects/company/.gitconfig", '[claude-code "attribution"]\n    pr = "relative"\n')
     company = sandbox.mkdir("devel/projects/company")
 
@@ -201,11 +203,21 @@ def test_session_url_boolean_spellings(sandbox):
     company = sandbox.mkdir("devel/projects/company")
     sandbox.write(".gitconfig", COMPANY_INCLUDE)
     cases = {
-        "true": True, "yes": True, "on": True, "1": True, "TRUE": True,
-        "false": False, "no": False, "off": False, "0": False, '""': False,
+        "true": True,
+        "yes": True,
+        "on": True,
+        "1": True,
+        "TRUE": True,
+        "false": False,
+        "no": False,
+        "off": False,
+        "0": False,
+        '""': False,
     }
     for spelling, expected in cases.items():
-        sandbox.write("devel/projects/company/.gitconfig", f'[claude-code "attribution"]\n    sessionUrl = {spelling}\n')
+        sandbox.write(
+            "devel/projects/company/.gitconfig", f'[claude-code "attribution"]\n    sessionUrl = {spelling}\n'
+        )
         assert sandbox.run_helper(company).settings == {"attribution": {"sessionUrl": expected}}, spelling
 
     # A key without "= value" is true in git.
@@ -215,7 +227,9 @@ def test_session_url_boolean_spellings(sandbox):
 
 def test_invalid_session_url_is_dropped_with_a_warning(sandbox):
     sandbox.write(".gitconfig", COMPANY_INCLUDE)
-    sandbox.write("devel/projects/company/.gitconfig", '[claude-code "attribution"]\n    sessionUrl = maybe\n    pr = "kept"\n')
+    sandbox.write(
+        "devel/projects/company/.gitconfig", '[claude-code "attribution"]\n    sessionUrl = maybe\n    pr = "kept"\n'
+    )
     company = sandbox.mkdir("devel/projects/company")
 
     result = sandbox.run_helper(company)
@@ -243,7 +257,7 @@ def test_empty_commit_is_kept_as_empty_string(sandbox):
 
 
 def test_broken_git_config_does_not_fail(sandbox):
-    sandbox.write(".gitconfig", "[claude-code \"attribution\"\n    this is not valid\n")
+    sandbox.write(".gitconfig", '[claude-code "attribution"\n    this is not valid\n')
     directory = sandbox.mkdir("anywhere")
 
     result = sandbox.run_helper(directory)
@@ -261,12 +275,14 @@ def test_missing_directory_does_not_fail(sandbox):
 
 
 def test_output_is_valid_json_for_special_characters(sandbox):
-    sandbox.write(".gitconfig", '[claude-code "attribution"]\n    pr = "quote \\" backslash \\\\ tab \\t emoji \U0001F916 }"\n')
+    sandbox.write(
+        ".gitconfig", '[claude-code "attribution"]\n    pr = "quote \\" backslash \\\\ tab \\t emoji \U0001f916 }"\n'
+    )
     directory = sandbox.mkdir("anywhere")
 
     result = sandbox.run_helper(directory)
 
-    assert result.settings == {"attribution": {"pr": 'quote " backslash \\ tab \t emoji \U0001F916 }'}}
+    assert result.settings == {"attribution": {"pr": 'quote " backslash \\ tab \t emoji \U0001f916 }'}}
     assert os.linesep not in result.stdout.rstrip("\n")
 
 
@@ -281,6 +297,8 @@ def test_attribution_and_session_start_do_not_load_the_installer(sandbox):
         "loaded = sorted(m for m in sys.modules if m == 'yaml' or m.endswith('.installer'))\n"
         "print(loaded)\n"
     )
-    result = subprocess.run([sys.executable, "-c", script, str(sandbox.home)], env=sandbox.env, capture_output=True, text=True)
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(sandbox.home)], env=sandbox.env, capture_output=True, text=True
+    )
 
     assert result.stdout.strip() == "[]", result.stderr

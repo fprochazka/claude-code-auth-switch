@@ -45,7 +45,9 @@ def run_management_command(argv: list[str]) -> int:
     )
     commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
-    install_parser = commands.add_parser("install", help="Create the profile directories and install the claude-<name> launchers")
+    install_parser = commands.add_parser(
+        "install", help="Create the profile directories and install the claude-<name> launchers"
+    )
     add_config_argument(install_parser)
     install_parser.add_argument(
         "--sync",

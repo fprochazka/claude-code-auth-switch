@@ -30,10 +30,31 @@ PROG = "cc-auth-switch start"
 
 # Claude Code subcommands reject --add-dir, --model and the other session options with "unknown option",
 # so arguments that start with one of them pass through unchanged.
-SUBCOMMANDS = frozenset({
-    "mcp", "auth", "doctor", "install", "setup-token", "update", "upgrade", "agents", "auto-mode", "plugin", "plugins",
-    "attach", "logs", "respawn", "rm", "stop", "kill", "purge", "import", "gateway", "ultrareview",
-})
+SUBCOMMANDS = frozenset(
+    {
+        "mcp",
+        "auth",
+        "doctor",
+        "install",
+        "setup-token",
+        "update",
+        "upgrade",
+        "agents",
+        "auto-mode",
+        "plugin",
+        "plugins",
+        "attach",
+        "logs",
+        "respawn",
+        "rm",
+        "stop",
+        "kill",
+        "purge",
+        "import",
+        "gateway",
+        "ultrareview",
+    }
+)
 
 # A name given at launch replaces the saved title of a resumed session, /rename included, so the tmux
 # name is left out when the user names the session or resumes one.
@@ -115,7 +136,9 @@ class LaunchContext:
     read_settings: Callable[[str, str], dict] = lambda value, cwd: read_settings_value(value, cwd)
     is_file: Callable[[str], bool] = os.path.isfile
     # The newest start-log line of a session (config dir, session id, cwd), or None without a readable log.
-    recorded_start: Callable[[Path, str, str], dict | None] = lambda config_dir, session_id, cwd: recorded_start_of(config_dir, session_id, cwd)
+    recorded_start: Callable[[Path, str, str], dict | None] = lambda config_dir, session_id, cwd: recorded_start_of(
+        config_dir, session_id, cwd
+    )
     # The newest start-log line of the newest session in a directory (config dir, cwd), as -c would continue it.
     # An empty dict when that session has no log, None when the directory has no session.
     newest_start: Callable[[Path, str], dict | None] = lambda config_dir, cwd: newest_start_in(config_dir, cwd)
@@ -188,14 +211,18 @@ def take_agent_role(args: Sequence[str], roles: Mapping[str, Role]) -> tuple[str
     if not (rest and rest[0] in SUBCOMMANDS):
         # claude would reject it as an unknown option; as the value of another option it is not one.
         if any(option.name == AGENT_ROLE_FLAG for option in scan(rest)):
-            raise LaunchError(f"{AGENT_ROLE_FLAG} must come before the arguments for claude, right after the profile: claude-<profile> {AGENT_ROLE_FLAG} <name> [claude arguments...]")
+            raise LaunchError(
+                f"{AGENT_ROLE_FLAG} must come before the arguments for claude, right after the profile: claude-<profile> {AGENT_ROLE_FLAG} <name> [claude arguments...]"
+            )
     if requested is None:
         return None, rest
     if not requested:
         raise LaunchError(f"{AGENT_ROLE_FLAG} needs a role name, or '{NO_ROLE}' for no role")
     if requested != NO_ROLE and requested not in roles:
         defined = ", ".join(sorted(roles)) or "none, the config has no roles: section"
-        raise LaunchError(f"{AGENT_ROLE_FLAG}: role '{requested}' is not defined in the config (defined roles: {defined})")
+        raise LaunchError(
+            f"{AGENT_ROLE_FLAG}: role '{requested}' is not defined in the config (defined roles: {defined})"
+        )
     return requested, rest
 
 
@@ -213,12 +240,20 @@ def role_args(role: Role, args: Sequence[str]) -> list[str]:
     variadic `--flag value` swallow the following words, the user's prompt included; --flag=value takes one.
     """
     result: list[str] = []
-    for flag, value in (("--effort", role.effort), ("--permission-mode", role.permission_mode), ("--autocompact", role.autocompact), ("--agents", role.agents)):
+    for flag, value in (
+        ("--effort", role.effort),
+        ("--permission-mode", role.permission_mode),
+        ("--autocompact", role.autocompact),
+        ("--agents", role.agents),
+    ):
         if value is not None and not has_option(args, flag):
             result += [flag, value]
     for flag, values in (
-        ("--tools", role.tools), ("--allowed-tools", role.allowed_tools), ("--disallowed-tools", role.disallowed_tools),
-        ("--plugin-dir", role.plugin_dirs), ("--mcp-config", role.mcp_config),
+        ("--tools", role.tools),
+        ("--allowed-tools", role.allowed_tools),
+        ("--disallowed-tools", role.disallowed_tools),
+        ("--plugin-dir", role.plugin_dirs),
+        ("--mcp-config", role.mcp_config),
     ):
         result += [f"{flag}={value}" for value in values]
     if role.strict_mcp_config and not has_option(args, "--strict-mcp-config"):
@@ -259,14 +294,21 @@ def role_label(role_name: str | None) -> str:
     return f"role '{role_name}'" if role_name else "no role"
 
 
-def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchContext, roles: Mapping[str, Role] | None = None) -> Launch:
+def build_launch(
+    profile: Profile, user_args: Sequence[str], context: LaunchContext, roles: Mapping[str, Role] | None = None
+) -> Launch:
     roles = roles or {}
     requested_role, args = take_agent_role(user_args, roles)
 
-    inherited_role_env = dict(entry.partition("=")[::2] for entry in context.environ.get(ROLE_ENV_KEYS_ENV, "").split(",") if "=" in entry)
+    inherited_role_env = dict(
+        entry.partition("=")[::2] for entry in context.environ.get(ROLE_ENV_KEYS_ENV, "").split(",") if "=" in entry
+    )
     env = {
-        key: value for key, value in context.environ.items()
-        if not key.startswith(CLEARED_ENV_PREFIXES) and key not in ROLE_ENV_VARS and inherited_role_env.get(key) != env_value_hash(value)
+        key: value
+        for key, value in context.environ.items()
+        if not key.startswith(CLEARED_ENV_PREFIXES)
+        and key not in ROLE_ENV_VARS
+        and inherited_role_env.get(key) != env_value_hash(value)
     }
     env["CLAUDE_CONFIG_DIR"] = str(profile.config_dir)
     env["FP_CC_AUTH_SWITCH_PROFILE"] = profile.name
@@ -302,22 +344,36 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
                 if recorded_role in roles:
                     role_name = recorded_role
                 else:
-                    notes.append(f"warning: session {session_id} ran as role '{recorded_role}', which the config no longer defines; resuming it without a role")
+                    notes.append(
+                        f"warning: session {session_id} ran as role '{recorded_role}', which the config no longer defines; resuming it without a role"
+                    )
             elif kind == "continue" and recorded_role:
-                notes.append(f"--continue starts without a role; the newest session here ran as role '{recorded_role}', add --agent-role {recorded_role} to keep it")
+                notes.append(
+                    f"--continue starts without a role; the newest session here ran as role '{recorded_role}', add --agent-role {recorded_role} to keep it"
+                )
         elif recorded is None or requested_name != recorded_role:
-            target = f"session {session_id}" if kind == "id" else "the newest session here" if kind == "continue" else "the picked session"
+            target = (
+                f"session {session_id}"
+                if kind == "id"
+                else "the newest session here"
+                if kind == "continue"
+                else "the picked session"
+            )
             was = f", which ran as {role_label(recorded_role)}," if recorded is not None else ""
             if not has_option(args, SNAPSHOT_FLAG):
                 snapshot_args = [SNAPSHOT_FLAG, "off"]
-                notes.append(f"resuming {target}{was} with {role_label(requested_name)}: {SNAPSHOT_FLAG} off sends the new system prompt, at the cost of prompt cache reuse for this run")
+                notes.append(
+                    f"resuming {target}{was} with {role_label(requested_name)}: {SNAPSHOT_FLAG} off sends the new system prompt, at the cost of prompt cache reuse for this run"
+                )
     role = roles[role_name] if role_name else None
 
     prompt_args: list[str] = []
     if role is not None:
         env.update(role.env)
         if role.env:
-            env[ROLE_ENV_KEYS_ENV] = ",".join(f"{key}={env_value_hash(value)}" for key, value in sorted(role.env.items()))
+            env[ROLE_ENV_KEYS_ENV] = ",".join(
+                f"{key}={env_value_hash(value)}" for key, value in sorted(role.env.items())
+            )
         env[ROLE_ENV] = role.name
         if role.prompt is not None:
             if not context.is_file(role.prompt.file):
@@ -328,7 +384,9 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
                 if has_option(args, *user_flags):
                     # The user's own prompt flag wins, so the role's prompt is not in the system prompt.
                     # Mode none tells the hooks to inject it instead.
-                    notes.append(f"your {' or '.join(user_flags)} replaces the prompt of role '{role.name}'; {ROLE_PROMPT_MODE_ENV}=none tells hooks to inject it")
+                    notes.append(
+                        f"your {' or '.join(user_flags)} replaces the prompt of role '{role.name}'; {ROLE_PROMPT_MODE_ENV}=none tells hooks to inject it"
+                    )
                     mode = "none"
                 else:
                     prompt_args = [flag, role.prompt.file]
@@ -343,7 +401,9 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
     # --settings with every layer merged: the git config attribution, the role's settings, and the
     # user's own --settings, the last one as Claude Code would take it.
     settings_args: list[str] = []
-    launcher_settings = merge_settings(context.git_attribution(context.cwd), role.settings if role is not None else None)
+    launcher_settings = merge_settings(
+        context.git_attribution(context.cwd), role.settings if role is not None else None
+    )
     # Without settings of its own, start leaves the user's --settings as it is.
     if launcher_settings:
         user_settings, without_settings = remove_option(passed_args, "--settings")
@@ -351,7 +411,9 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
         user_settings = [values for values in user_settings if values]
         if user_settings:
             passed_args = without_settings
-            launcher_settings = merge_settings(launcher_settings, context.read_settings(user_settings[-1][0], context.cwd))
+            launcher_settings = merge_settings(
+                launcher_settings, context.read_settings(user_settings[-1][0], context.cwd)
+            )
         settings_args = ["--settings", json.dumps(launcher_settings, ensure_ascii=False)]
 
     name_args: list[str] = []
@@ -368,7 +430,11 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
     if role is not None:
         add_dir_args += [f"--add-dir={directory}" for directory in role.add_dirs]
         role_launch_args = [*role_args(role, args), *prompt_args, *role.extra_args]
-    return Launch([*add_dir_args, *settings_args, *name_args, *role_launch_args, *snapshot_args, *model_args, *passed_args], env, tuple(notes))
+    return Launch(
+        [*add_dir_args, *settings_args, *name_args, *role_launch_args, *snapshot_args, *model_args, *passed_args],
+        env,
+        tuple(notes),
+    )
 
 
 def project_dir_names(cwd: str) -> list[str]:
@@ -447,7 +513,9 @@ def resolve_profile(config: dict, secrets: dict[str, dict[str, str]], profiles_b
     env_vars = {**pinned_models_to_env(name, mapping("pinned_models")), **env_vars}
     for key, value in env_vars.items():
         if not ENV_NAME.fullmatch(key):
-            raise ConfigError(f"profile '{name}': env variable name {key!r} is not a valid shell variable name (letters, digits and _, not starting with a digit)")
+            raise ConfigError(
+                f"profile '{name}': env variable name {key!r} is not a valid shell variable name (letters, digits and _, not starting with a digit)"
+            )
         if "\0" in value:
             raise ConfigError(f"profile '{name}': env value of '{key}' contains a NUL character")
 
@@ -515,7 +583,9 @@ def logical_cwd(environ: Mapping[str, str]) -> str:
 
 def tmux_session_of(pane: str) -> str | None:
     try:
-        result = subprocess.run(["tmux", "display-message", "-p", "-t", pane, "#S"], capture_output=True, timeout=TMUX_TIMEOUT_SECONDS)
+        result = subprocess.run(
+            ["tmux", "display-message", "-p", "-t", pane, "#S"], capture_output=True, timeout=TMUX_TIMEOUT_SECONDS
+        )
     except (OSError, subprocess.TimeoutExpired):
         return None
     if result.returncode != 0:
@@ -561,7 +631,10 @@ def main(argv: Sequence[str]) -> int:
     except Exception as error:  # noqa: BLE001 -- any failure must stop the launch with a message, not a traceback
         if os.environ.get(DEBUG_ENV) == "1":
             raise
-        print(f"{PROG}: not starting Claude for profile '{name}' with {config_path}: {type(error).__name__}: {error}", file=sys.stderr)
+        print(
+            f"{PROG}: not starting Claude for profile '{name}' with {config_path}: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
         print(f"{PROG}: set {DEBUG_ENV}=1 to see the traceback", file=sys.stderr)
         return 1
 

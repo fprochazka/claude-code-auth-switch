@@ -78,7 +78,7 @@ def parse_entries(output: bytes, with_origin: bool) -> list[tuple[str | None, st
 def origin_dir(origin: str | None) -> str | None:
     if origin is None or not origin.startswith("file:"):
         return None
-    return os.path.dirname(os.path.abspath(origin[len("file:"):]))
+    return os.path.dirname(os.path.abspath(origin[len("file:") :]))
 
 
 def expand_include_path(path: str, base_dir: str | None) -> str | None:
@@ -130,7 +130,9 @@ def collect_outside_repo(scope: list[str], directory: str, depth: int = 0) -> li
     result = git(["config", *scope, "--includes", "--show-origin", "-z", "--get-regexp", pattern], directory)
     # Exit code 1 means no key matched; a missing config file also lands here.
     if result.returncode not in (0, 1):
-        raise RuntimeError(result.stderr.decode("utf-8", errors="replace").strip() or f"git config exited with {result.returncode}")
+        raise RuntimeError(
+            result.stderr.decode("utf-8", errors="replace").strip() or f"git config exited with {result.returncode}"
+        )
 
     values: list[tuple[str, str | None]] = []
     for origin, key, value in parse_entries(result.stdout, with_origin=True):
@@ -139,7 +141,7 @@ def collect_outside_repo(scope: list[str], directory: str, depth: int = 0) -> li
             continue
         if value is None:
             continue
-        condition = key[len("includeif."):-len(".path")]
+        condition = key[len("includeif.") : -len(".path")]
         base_dir = origin_dir(origin)
         if not gitdir_condition_matches(condition, base_dir, directory):
             continue
@@ -153,7 +155,9 @@ def collect_outside_repo(scope: list[str], directory: str, depth: int = 0) -> li
 def collect_inside_repo(directory: str) -> list[tuple[str, str | None]]:
     result = git(["config", "-z", "--get-regexp", SECTION_REGEX], directory)
     if result.returncode not in (0, 1):
-        raise RuntimeError(result.stderr.decode("utf-8", errors="replace").strip() or f"git config exited with {result.returncode}")
+        raise RuntimeError(
+            result.stderr.decode("utf-8", errors="replace").strip() or f"git config exited with {result.returncode}"
+        )
     return [(key, value) for _, key, value in parse_entries(result.stdout, with_origin=False)]
 
 
@@ -176,7 +180,7 @@ def build_attribution(values: list[tuple[str, str | None]]) -> dict[str, object]
     """Turn raw (key, value) pairs into the attribution object; the last value of a key wins."""
     last: dict[str, str | None] = {}
     for key, value in values:
-        last[key[len(SECTION_PREFIX):]] = value
+        last[key[len(SECTION_PREFIX) :]] = value
 
     attribution: dict[str, object] = {}
     for name, value in last.items():

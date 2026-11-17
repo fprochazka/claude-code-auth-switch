@@ -192,7 +192,9 @@ def test_catch_up_keeps_the_mtime_rule_for_a_file_without_a_record(old_and_share
 
 
 @pytest.mark.parametrize("old_mtime, expected", [(MTIME + 1, "old"), (MTIME, "session"), (MTIME - 1, "session")])
-def test_catch_up_keeps_a_shared_copy_that_a_session_wrote_unless_the_old_one_is_newer(old_and_shared, old_mtime, expected):
+def test_catch_up_keeps_a_shared_copy_that_a_session_wrote_unless_the_old_one_is_newer(
+    old_and_shared, old_mtime, expected
+):
     old, shared = old_and_shared
     set_file(old / "4242.json", "first", MTIME - 10)
     copied: dict = {}
@@ -215,7 +217,6 @@ def test_first_pass_keeps_a_newer_shared_copy_and_catch_up_keeps_the_mtime_rule_
     set_file(old / "4242.json", "old again", MTIME)
     assert sessions.copy_newer(old, shared, copied=copied) == []
     assert (shared / "4242.json").read_text() == "shared"
-
 
 
 @pytest.mark.parametrize("order", ["old first", "recreated first"])
@@ -252,7 +253,6 @@ def test_copies_leave_no_temp_files(old_and_shared):
     assert (shared / "1.json").stat().st_mode & 0o777 == 0o600
 
 
-
 def test_a_pass_deletes_temp_files_of_a_killed_pass_and_never_copies_them(old_and_shared):
     old, shared = old_and_shared
     set_file(old / "1.json", "a", MTIME)
@@ -260,7 +260,12 @@ def test_a_pass_deletes_temp_files_of_a_killed_pass_and_never_copies_them(old_an
     leftover.write_text("half")
     in_source = old / ".2.json.abcd1234.cc-auth-switch-tmp"
     in_source.write_text("half")
-    not_ours = [".1.json.ABCD1234.cc-auth-switch-tmp", ".1.json.abc.cc-auth-switch-tmp", "1.json.abcd1234.cc-auth-switch-tmp", ".1.json.abcd1234.cc-auth-switch-tmp.bak"]
+    not_ours = [
+        ".1.json.ABCD1234.cc-auth-switch-tmp",
+        ".1.json.abc.cc-auth-switch-tmp",
+        "1.json.abcd1234.cc-auth-switch-tmp",
+        ".1.json.abcd1234.cc-auth-switch-tmp.bak",
+    ]
     for name in not_ours:
         (shared / name).write_text("keep")
 
@@ -298,7 +303,16 @@ def dead_pid() -> int:
 def write_start_log(profile_dir: Path, session_id: str, pid: int, config_dir: Path) -> None:
     session_dir = profile_dir / "projects" / "-home-user-devel-service" / session_id
     session_dir.mkdir(parents=True)
-    line = {"v": 1, "ts": 1, "session_id": session_id, "pid": pid, "source": "startup", "profile": None, "config_dir": str(config_dir), "cwd": "/"}
+    line = {
+        "v": 1,
+        "ts": 1,
+        "session_id": session_id,
+        "pid": pid,
+        "source": "startup",
+        "profile": None,
+        "config_dir": str(config_dir),
+        "cwd": "/",
+    }
     (session_dir / "auth-switch-profile-starts.jsonl").write_text(json.dumps(line) + "\n")
 
 
@@ -319,7 +333,12 @@ def test_rollback_moves_back_only_the_records_of_this_profile(tmp_path, sleeper)
     of_other = sleeper({"CLAUDE_CONFIG_DIR": str(other)})
     of_plain_claude = sleeper({})
     ended = dead_pid()
-    for pid, session_id in ((by_log, "sid-log"), (by_environ, "sid-env"), (of_other, "sid-other"), (of_plain_claude, "sid-plain")):
+    for pid, session_id in (
+        (by_log, "sid-log"),
+        (by_environ, "sid-env"),
+        (of_other, "sid-other"),
+        (of_plain_claude, "sid-plain"),
+    ):
         write(mine / "sessions" / f"{pid}.json", json.dumps({"pid": pid, "sessionId": session_id}))
     write(mine / "sessions" / f"{by_environ}.abc.key", "key")
     # Known by the migration backup only, and no longer running.
@@ -331,7 +350,9 @@ def test_rollback_moves_back_only_the_records_of_this_profile(tmp_path, sleeper)
 
     live = mine / "sessions"
     assert live.is_dir() and not live.is_symlink()
-    assert sorted(p.name for p in live.iterdir()) == sorted([f"{by_log}.json", f"{by_environ}.json", f"{by_environ}.abc.key"])
+    assert sorted(p.name for p in live.iterdir()) == sorted(
+        [f"{by_log}.json", f"{by_environ}.json", f"{by_environ}.abc.key"]
+    )
     assert sorted(p.name for p in target.iterdir()) == sorted([f"{of_other}.json", f"{of_plain_claude}.json"])
     assert owned.dead == {f"{ended}.json"}
     assert (other / "sessions").is_symlink()
@@ -355,16 +376,18 @@ def sharing_config(sandbox):
     write(sandbox.mkdir("profiles/work-team/sessions") / "100.json", '{"pid": 100}')
 
     def config(share: str) -> str:
-        return str(sandbox.write(
-            "auth-switch.yaml",
-            f"source_dir: {source_dir}\n"
-            f"bin_dir: {sandbox.home / 'bin'}\n"
-            f"profiles_dir: {profiles}\n"
-            "profiles:\n"
-            "  work-team:\n"
-            f"    share_sessions: {share}\n"
-            "  personal: {}\n",
-        ))
+        return str(
+            sandbox.write(
+                "auth-switch.yaml",
+                f"source_dir: {source_dir}\n"
+                f"bin_dir: {sandbox.home / 'bin'}\n"
+                f"profiles_dir: {profiles}\n"
+                "profiles:\n"
+                "  work-team:\n"
+                f"    share_sessions: {share}\n"
+                "  personal: {}\n",
+            )
+        )
 
     return config, profiles
 
@@ -387,7 +410,9 @@ def test_turning_the_flag_off_warns_and_rollback_undoes_the_sharing(sandbox, sha
     warned = sandbox.run_install("--config", config("false"))
     rolled_back = subprocess.run(
         ["cc-auth-switch", "rollback-sessions", "--config", config("false"), "work-team"],
-        env=sandbox.env, capture_output=True, text=True,
+        env=sandbox.env,
+        capture_output=True,
+        text=True,
     )
 
     assert "still shared" in warned.stdout

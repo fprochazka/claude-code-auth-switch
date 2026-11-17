@@ -72,6 +72,7 @@ def resolve_copy_files(source_dir: Path) -> list[str]:
         result.append(name)
     return result
 
+
 # Directories that are safe to symlink (files inside are real)
 SYMLINK_DIRS = [
     "commands",
@@ -98,7 +99,10 @@ def resolve_command(name: str) -> Path:
     found = shutil.which(name)
     if found is None:
         print(f"Error: {name} is not on PATH.", file=sys.stderr)
-        print("Install the tool with `uv tool install`, see the README, and make sure its bin directory is on PATH.", file=sys.stderr)
+        print(
+            "Install the tool with `uv tool install`, see the README, and make sure its bin directory is on PATH.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     return Path(os.path.abspath(found))
 
@@ -214,21 +218,32 @@ def read_source_plugin_keys(source_dir: Path) -> dict | None:
     return {key: data[key] for key in PLUGIN_SETTINGS_KEYS if key in data}
 
 
-def check_plugin_overrides(profile_name: str, profile_config: dict, source_dir: Path, source_plugin_keys: dict | None) -> None:
+def check_plugin_overrides(
+    profile_name: str, profile_config: dict, source_dir: Path, source_plugin_keys: dict | None
+) -> None:
     """Validate profiles.<name>.plugins, and warn about enabled plugins that Claude Code cannot install."""
     overrides = profile_config.get("plugins")
     if overrides is None:
         return
     if not isinstance(overrides, dict):
-        print(f"Error: Profile '{profile_name}' has plugins: {overrides!r}, expected a map of \"<plugin>@<marketplace>\" to true or false", file=sys.stderr)
+        print(
+            f"Error: Profile '{profile_name}' has plugins: {overrides!r}, expected a map of \"<plugin>@<marketplace>\" to true or false",
+            file=sys.stderr,
+        )
         sys.exit(1)
     for plugin_id, enabled in overrides.items():
         parts = plugin_id.split("@") if isinstance(plugin_id, str) else []
         if len(parts) != 2 or not all(parts):
-            print(f"Error: Profile '{profile_name}' has plugins key {plugin_id!r}, expected \"<plugin>@<marketplace>\"", file=sys.stderr)
+            print(
+                f"Error: Profile '{profile_name}' has plugins key {plugin_id!r}, expected \"<plugin>@<marketplace>\"",
+                file=sys.stderr,
+            )
             sys.exit(1)
         if not isinstance(enabled, bool):
-            print(f"Error: Profile '{profile_name}' has plugins value {enabled!r} for '{plugin_id}', expected true or false", file=sys.stderr)
+            print(
+                f"Error: Profile '{profile_name}' has plugins value {enabled!r} for '{plugin_id}', expected true or false",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
     known = set()
@@ -404,10 +419,12 @@ def merge_session_start_hook(data: dict, hook_command: str) -> None:
                     continue
                 group = {**group, "hooks": inner}
         kept.append(group)
-    kept.append({
-        "matcher": "",
-        "hooks": [{"type": "command", "command": hook_command, "timeout": SESSION_START_HOOK_TIMEOUT_SECONDS}],
-    })
+    kept.append(
+        {
+            "matcher": "",
+            "hooks": [{"type": "command", "command": hook_command, "timeout": SESSION_START_HOOK_TIMEOUT_SECONDS}],
+        }
+    )
     data["hooks"] = {**hooks, "SessionStart": kept}
 
 
@@ -485,13 +502,18 @@ def patch_settings_json(
 def generate_launcher_script(profile_name: str, description: str, tool_command: Path, config_path: Path) -> str:
     """The claude-<profile> launcher. All launch logic lives in `cc-auth-switch start`, which reads the config on every launch."""
     command = shlex.join([str(tool_command), "start", "--config", str(config_path), profile_name])
-    return "\n".join([
-        "#!/usr/bin/env bash",
-        MARKER,
-        # A newline in the description would end the comment and run the rest as a command.
-        f"# Profile: {profile_name} — {' '.join(str(description).splitlines())}",
-        f'exec {command} "$@"',
-    ]) + "\n"
+    return (
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                MARKER,
+                # A newline in the description would end the comment and run the rest as a command.
+                f"# Profile: {profile_name} — {' '.join(str(description).splitlines())}",
+                f'exec {command} "$@"',
+            ]
+        )
+        + "\n"
+    )
 
 
 def install_launcher_script(script_path: Path, content: str) -> None:
@@ -514,7 +536,9 @@ def is_legacy_uv_entry_point(path: Path, name: str) -> bool:
     if not path.is_symlink():
         return False
     target = Path(os.readlink(path))
-    return target.name == name and target.parent.name == "bin" and target.parent.parent.name == "claude-code-auth-switch"
+    return (
+        target.name == name and target.parent.name == "bin" and target.parent.parent.name == "claude-code-auth-switch"
+    )
 
 
 def cleanup_legacy_commands(bin_dir: Path) -> None:
@@ -613,20 +637,20 @@ def collect_diverged_files(
                 src_lines = src.read_text().splitlines(keepends=True)
 
             dst_lines = dst.read_text().splitlines(keepends=True)
-            diff = list(difflib.unified_diff(
-                src_lines, dst_lines,
-                fromfile=str(src),
-                tofile=str(dst),
-            ))
+            diff = list(
+                difflib.unified_diff(
+                    src_lines,
+                    dst_lines,
+                    fromfile=str(src),
+                    tofile=str(dst),
+                )
+            )
             if not diff:
                 continue
             # Check if profile has any additions (content not in source)
-            has_additions = any(
-                line.startswith('+') and not line.startswith('+++')
-                for line in diff
-            )
+            has_additions = any(line.startswith("+") and not line.startswith("+++") for line in diff)
             if has_additions:
-                diverged.append((profile_name, filename, ''.join(diff)))
+                diverged.append((profile_name, filename, "".join(diff)))
     return diverged
 
 
@@ -740,7 +764,9 @@ def install(config_arg: Path | None, sync: bool, force: bool) -> None:
             sync_mcp_servers(profile_name, profile_dir, source_claude_json_path, backup)
 
             # Install the launcher, which runs `cc-auth-switch start <profile>`
-            install_launcher_script(script_path, generate_launcher_script(profile_name, description, tool_command, config_path))
+            install_launcher_script(
+                script_path, generate_launcher_script(profile_name, description, tool_command, config_path)
+            )
         if not section.printed:
             print("  in sync, nothing changed")
 
@@ -754,7 +780,9 @@ def install(config_arg: Path | None, sync: bool, force: bool) -> None:
 
     print("\nDone.")
     if any(backup.directory is not None for backup in backups):
-        print(f"Backups of replaced files are in <profile>/{BACKUPS_DIR_NAME}/. cc-auth-switch never deletes them; remove them with rm when you no longer need them.")
+        print(
+            f"Backups of replaced files are in <profile>/{BACKUPS_DIR_NAME}/. cc-auth-switch never deletes them; remove them with rm when you no longer need them."
+        )
 
 
 def rollback_sessions(config_arg: Path | None, profile_name: str) -> None:

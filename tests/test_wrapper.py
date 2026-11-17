@@ -122,10 +122,32 @@ def test_subcommand_passthrough_gets_no_settings(installed, sandbox):
     assert argv == ["mcp", "list"]
 
 
-@pytest.mark.parametrize("subcommand", [
-    "mcp", "auth", "doctor", "install", "setup-token", "update", "upgrade", "agents", "auto-mode", "plugin", "plugins",
-    "attach", "logs", "respawn", "rm", "stop", "kill", "purge", "import", "gateway", "ultrareview",
-])
+@pytest.mark.parametrize(
+    "subcommand",
+    [
+        "mcp",
+        "auth",
+        "doctor",
+        "install",
+        "setup-token",
+        "update",
+        "upgrade",
+        "agents",
+        "auto-mode",
+        "plugin",
+        "plugins",
+        "attach",
+        "logs",
+        "respawn",
+        "rm",
+        "stop",
+        "kill",
+        "purge",
+        "import",
+        "gateway",
+        "ultrareview",
+    ],
+)
 def test_subcommands_get_neither_model_nor_add_dir(installed, sandbox, subcommand):
     bin_dir, env = installed
 
@@ -142,7 +164,12 @@ def test_user_settings_flag_is_merged_over_the_git_config_attribution(installed,
 
     argv = json.loads(run_wrapper(bin_dir, env, "plain", repo, *(arg.format(own=own) for arg in user_flag)).stdout)
 
-    assert argv == ["--settings", json.dumps({"attribution": {**EXPECTED["attribution"], "sessionUrl": True}, "model": "opus"}, ensure_ascii=False)]
+    assert argv == [
+        "--settings",
+        json.dumps(
+            {"attribution": {**EXPECTED["attribution"], "sessionUrl": True}, "model": "opus"}, ensure_ascii=False
+        ),
+    ]
 
 
 def test_unreadable_user_settings_stops_the_launch(installed, sandbox):
@@ -177,18 +204,25 @@ def test_unparsable_config_stops_the_launch(installed, sandbox):
     config = sandbox.home / "auth-switch.yaml"
     config.write_text(config.read_text() + "  broken: [\n")
 
-    assert_launch_refused(run_wrapper(bin_dir, env, "plain", sandbox.home), f"cannot read {config}", "not starting Claude for profile 'plain'")
+    assert_launch_refused(
+        run_wrapper(bin_dir, env, "plain", sandbox.home),
+        f"cannot read {config}",
+        "not starting Claude for profile 'plain'",
+    )
 
 
-@pytest.mark.parametrize("profile_yaml, error", [
-    ("    env: [A, B]\n", "profile 'modeled': 'env' must be a mapping"),
-    ("    add_dirs: ~/single\n", "profile 'modeled': 'add_dirs' must be a list of paths"),
-    ("    pinned_models:\n      gpt: x\n", "unknown pinned_models class 'gpt'"),
-    ("    env:\n      A=B: x\n", "profile 'modeled': env variable name 'A=B' is not a valid shell variable name"),
-    ("    env:\n      1X: x\n", "profile 'modeled': env variable name '1X' is not a valid shell variable name"),
-    ('    env:\n      A: "a\\0b"\n', "profile 'modeled': env value of 'A' contains a NUL character"),
-    ('    add_dirs:\n      - "/a\\0b"\n', "profile 'modeled': an 'add_dirs' entry contains a NUL character"),
-])
+@pytest.mark.parametrize(
+    "profile_yaml, error",
+    [
+        ("    env: [A, B]\n", "profile 'modeled': 'env' must be a mapping"),
+        ("    add_dirs: ~/single\n", "profile 'modeled': 'add_dirs' must be a list of paths"),
+        ("    pinned_models:\n      gpt: x\n", "unknown pinned_models class 'gpt'"),
+        ("    env:\n      A=B: x\n", "profile 'modeled': env variable name 'A=B' is not a valid shell variable name"),
+        ("    env:\n      1X: x\n", "profile 'modeled': env variable name '1X' is not a valid shell variable name"),
+        ('    env:\n      A: "a\\0b"\n', "profile 'modeled': env value of 'A' contains a NUL character"),
+        ('    add_dirs:\n      - "/a\\0b"\n', "profile 'modeled': an 'add_dirs' entry contains a NUL character"),
+    ],
+)
 def test_invalid_profile_stops_the_launch(installed, sandbox, profile_yaml, error):
     bin_dir, env = installed
     config = sandbox.home / "auth-switch.yaml"
@@ -204,7 +238,10 @@ def test_install_refuses_an_env_name_that_cannot_reach_claude(installed, sandbox
     result = sandbox.run_install("--config", str(config), check=False)
 
     assert result.returncode == 1
-    assert f"Error: {config}: profile 'modeled': env variable name 'A-B' is not a valid shell variable name" in result.stderr
+    assert (
+        f"Error: {config}: profile 'modeled': env variable name 'A-B' is not a valid shell variable name"
+        in result.stderr
+    )
 
 
 def test_removed_profile_stops_the_launch(installed, sandbox):
@@ -212,7 +249,9 @@ def test_removed_profile_stops_the_launch(installed, sandbox):
     config = sandbox.home / "auth-switch.yaml"
     config.write_text(config.read_text().split("  modeled:")[0])
 
-    assert_launch_refused(run_wrapper(bin_dir, env, "modeled", sandbox.home), f"{config}: profile 'modeled' is not defined")
+    assert_launch_refused(
+        run_wrapper(bin_dir, env, "modeled", sandbox.home), f"{config}: profile 'modeled' is not defined"
+    )
 
 
 def test_missing_config_stops_the_launch(installed, sandbox):
@@ -228,14 +267,20 @@ def test_secrets_file_that_git_would_publish_stops_the_launch(installed, sandbox
     sandbox.git_init(".")
     secrets = sandbox.write("auth-switch.secrets.yaml", 'profiles:\n  plain:\n    env:\n      KEY: "value"\n')
 
-    assert_launch_refused(run_wrapper(bin_dir, env, "plain", sandbox.home), f"Secrets file {secrets} is inside a git repository but is not ignored", str(sandbox.home / "auth-switch.yaml"))
+    assert_launch_refused(
+        run_wrapper(bin_dir, env, "plain", sandbox.home),
+        f"Secrets file {secrets} is inside a git repository but is not ignored",
+        str(sandbox.home / "auth-switch.yaml"),
+    )
 
 
 def test_invalid_secrets_file_stops_the_launch(installed, sandbox):
     bin_dir, env = installed
     secrets = sandbox.write("auth-switch.secrets.yaml", "profiles:\n  plain:\n    model: opus\n")
 
-    assert_launch_refused(run_wrapper(bin_dir, env, "plain", sandbox.home), f"{secrets}: profile 'plain' may only contain 'env'")
+    assert_launch_refused(
+        run_wrapper(bin_dir, env, "plain", sandbox.home), f"{secrets}: profile 'plain' may only contain 'env'"
+    )
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads files regardless of their mode")
@@ -252,7 +297,12 @@ def test_config_changes_apply_without_reinstalling(installed, sandbox):
     config = sandbox.home / "auth-switch.yaml"
     config.write_text(config.read_text().replace("model: sonnet", "model: opus"))
 
-    assert json.loads(run_wrapper(bin_dir, env, "modeled", sandbox.home, "-p", "x").stdout)[-4:] == ["--model", "opus", "-p", "x"]
+    assert json.loads(run_wrapper(bin_dir, env, "modeled", sandbox.home, "-p", "x").stdout)[-4:] == [
+        "--model",
+        "opus",
+        "-p",
+        "x",
+    ]
 
 
 def test_install_fails_when_the_helper_is_not_on_path(installed, sandbox):
@@ -260,8 +310,17 @@ def test_install_fails_when_the_helper_is_not_on_path(installed, sandbox):
     env = {**sandbox.env, "PATH": f"{sandbox.tool_bin}{os.pathsep}/usr/bin{os.pathsep}/bin"}
 
     result = subprocess.run(
-        [sys.executable, "-m", "claude_code_auth_switch", "install", "--config", str(sandbox.home / "auth-switch.yaml")],
-        env=env, capture_output=True, text=True,
+        [
+            sys.executable,
+            "-m",
+            "claude_code_auth_switch",
+            "install",
+            "--config",
+            str(sandbox.home / "auth-switch.yaml"),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
     )
 
     assert result.returncode == 1
@@ -348,10 +407,25 @@ def test_wrapper_outside_tmux_passes_no_name(installed, sandbox):
     assert "--name" not in json.loads(run_wrapper(bin_dir, env, "plain", sandbox.home).stdout)
 
 
-@pytest.mark.parametrize("user_args", [
-    ["-n", "mine"], ["--name", "mine"], ["--name=mine"], ["-r"], ["--resume"], ["--resume", "abc"], ["--resume=abc"],
-    ["-c"], ["--continue"], ["--session-id", "abc"], ["--session-id=abc"], ["--fork-session"], ["--from-pr", "7"], ["--from-pr=7"],
-])
+@pytest.mark.parametrize(
+    "user_args",
+    [
+        ["-n", "mine"],
+        ["--name", "mine"],
+        ["--name=mine"],
+        ["-r"],
+        ["--resume"],
+        ["--resume", "abc"],
+        ["--resume=abc"],
+        ["-c"],
+        ["--continue"],
+        ["--session-id", "abc"],
+        ["--session-id=abc"],
+        ["--fork-session"],
+        ["--from-pr", "7"],
+        ["--from-pr=7"],
+    ],
+)
 def test_wrapper_passes_no_name_when_the_session_already_has_or_resumes_one(in_tmux, sandbox, user_args):
     bin_dir, env = in_tmux
 
@@ -397,7 +471,9 @@ def run_start(sandbox, env, cwd, *args):
 def test_start_accepts_config_with_equals_sign(installed, sandbox):
     bin_dir, env = installed
 
-    result = run_start(sandbox, env, sandbox.home, f"--config={sandbox.home / 'auth-switch.yaml'}", "modeled", "-p", "x")
+    result = run_start(
+        sandbox, env, sandbox.home, f"--config={sandbox.home / 'auth-switch.yaml'}", "modeled", "-p", "x"
+    )
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)[-4:] == ["--model", "sonnet", "-p", "x"]
@@ -412,7 +488,16 @@ def test_start_reads_a_relative_config_and_its_secrets_from_the_current_director
     # Anchored to config/, so git must be asked about the file by its real path.
     (config_dir / ".gitignore").write_text("/auth-switch.secrets.yaml\n")
 
-    result = run_start(sandbox, {**env, "PWD": str(sandbox.home)}, sandbox.home, "--config", "config/auth-switch.yaml", "plain", "-p", "x")
+    result = run_start(
+        sandbox,
+        {**env, "PWD": str(sandbox.home)},
+        sandbox.home,
+        "--config",
+        "config/auth-switch.yaml",
+        "plain",
+        "-p",
+        "x",
+    )
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == ["-p", "x"]

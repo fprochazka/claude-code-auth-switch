@@ -8,10 +8,23 @@ import pytest
 
 from claude_code_auth_switch import launcher
 from claude_code_auth_switch.installer import MARKER, cleanup_stale_scripts, generate_launcher_script
-from claude_code_auth_switch.launcher import LaunchContext, LaunchError, Profile, build_launch, merge_settings, parse_args
+from claude_code_auth_switch.launcher import (
+    LaunchContext,
+    LaunchError,
+    Profile,
+    build_launch,
+    merge_settings,
+    parse_args,
+)
 from legacy_wrapper import generate_wrapper_script
 
-PROFILE = Profile(name="work", config_dir=Path("/profiles/work"), env={"A": "$HOME `x` \"q\""}, add_dirs=(Path("/repo dir"),), model="sonnet")
+PROFILE = Profile(
+    name="work",
+    config_dir=Path("/profiles/work"),
+    env={"A": '$HOME `x` "q"'},
+    add_dirs=(Path("/repo dir"),),
+    model="sonnet",
+)
 
 
 def context(environ=None, attribution=None, tmux="sess") -> tuple[LaunchContext, list]:
@@ -25,7 +38,9 @@ def context(environ=None, attribution=None, tmux="sess") -> tuple[LaunchContext,
         calls.append(("git", cwd))
         return attribution
 
-    return LaunchContext(cwd="/work", environ=environ or {}, tmux_session=tmux_session, git_attribution=git_attribution), calls
+    return LaunchContext(
+        cwd="/work", environ=environ or {}, tmux_session=tmux_session, git_attribution=git_attribution
+    ), calls
 
 
 def test_build_launch_orders_arguments_like_the_bash_wrapper():
@@ -33,15 +48,38 @@ def test_build_launch_orders_arguments_like_the_bash_wrapper():
 
     launch = build_launch(PROFILE, ["-p", "hi"], ctx)
 
-    assert launch.argv == ["--add-dir=/repo dir", "--settings", '{"attribution": {"pr": ""}}', "--name", "sess-p7", "--model", "sonnet", "-p", "hi"]
+    assert launch.argv == [
+        "--add-dir=/repo dir",
+        "--settings",
+        '{"attribution": {"pr": ""}}',
+        "--name",
+        "sess-p7",
+        "--model",
+        "sonnet",
+        "-p",
+        "hi",
+    ]
 
 
 def test_build_launch_clears_inherited_claude_and_anthropic_variables_and_keeps_values_literal():
-    ctx, _ = context({"CLAUDE_X": "1", "ANTHROPIC_API_KEY": "k", "CLAUDE_CONFIG_DIR": "/wrong", "PATH": "/bin", "FP_CC_AUTH_SWITCH_PROFILE": "other"})
+    ctx, _ = context(
+        {
+            "CLAUDE_X": "1",
+            "ANTHROPIC_API_KEY": "k",
+            "CLAUDE_CONFIG_DIR": "/wrong",
+            "PATH": "/bin",
+            "FP_CC_AUTH_SWITCH_PROFILE": "other",
+        }
+    )
 
     env = build_launch(PROFILE, [], ctx).env
 
-    assert env == {"PATH": "/bin", "CLAUDE_CONFIG_DIR": "/profiles/work", "FP_CC_AUTH_SWITCH_PROFILE": "work", "A": "$HOME `x` \"q\""}
+    assert env == {
+        "PATH": "/bin",
+        "CLAUDE_CONFIG_DIR": "/profiles/work",
+        "FP_CC_AUTH_SWITCH_PROFILE": "work",
+        "A": '$HOME `x` "q"',
+    }
 
 
 def test_profile_env_wins_over_the_variables_the_launcher_sets():
@@ -62,12 +100,26 @@ def test_resume_skips_tmux():
 def test_the_last_user_settings_is_merged_over_the_attribution_into_one_settings():
     ctx, _ = context(attribution={"attribution": {"commit": "git", "pr": "git"}, "permissions": {"allow": ["Read"]}})
 
-    launch = build_launch(PROFILE, ["--settings", '{"ignored": 1}', "-p", "hi", '--settings={"attribution": {"pr": "user"}, "permissions": {"allow": ["Read", "Bash"]}}'], ctx)
+    launch = build_launch(
+        PROFILE,
+        [
+            "--settings",
+            '{"ignored": 1}',
+            "-p",
+            "hi",
+            '--settings={"attribution": {"pr": "user"}, "permissions": {"allow": ["Read", "Bash"]}}',
+        ],
+        ctx,
+    )
 
     assert launch.argv == [
         "--add-dir=/repo dir",
-        "--settings", '{"attribution": {"commit": "git", "pr": "user"}, "permissions": {"allow": ["Read", "Bash"]}}',
-        "--model", "sonnet", "-p", "hi",
+        "--settings",
+        '{"attribution": {"commit": "git", "pr": "user"}, "permissions": {"allow": ["Read", "Bash"]}}',
+        "--model",
+        "sonnet",
+        "-p",
+        "hi",
     ]
 
 
@@ -76,10 +128,16 @@ def test_user_settings_file_is_read_relative_to_the_start_directory(tmp_path):
     ctx, _ = context(attribution={"attribution": {"pr": ""}})
     ctx = dataclasses.replace(ctx, cwd=str(tmp_path))
 
-    assert build_launch(PROFILE, ["--settings", "own.json"], ctx).argv[1:3] == ["--settings", '{"attribution": {"pr": ""}, "model": "x"}']
+    assert build_launch(PROFILE, ["--settings", "own.json"], ctx).argv[1:3] == [
+        "--settings",
+        '{"attribution": {"pr": ""}, "model": "x"}',
+    ]
 
 
-@pytest.mark.parametrize("value, error", [("missing.json", "cannot read"), ("{not json", "not valid JSON"), ("list.json", "must hold a JSON object")])
+@pytest.mark.parametrize(
+    "value, error",
+    [("missing.json", "cannot read"), ("{not json", "not valid JSON"), ("list.json", "must hold a JSON object")],
+)
 def test_unreadable_user_settings_stops_the_launch(tmp_path, value, error):
     (tmp_path / "list.json").write_text("[1]")
     with pytest.raises(LaunchError, match=error):
@@ -98,20 +156,42 @@ def test_a_relative_settings_path_and_relative_paths_inside_it_stay_as_written(t
     assert build_launch(PROFILE, ["--settings", "own.json"], ctx).argv[-2:] == ["--settings", "own.json"]
     # Something to merge: claude gets the content inline, the path inside it unchanged.
     merged = build_launch(PROFILE, ["--settings", "own.json"], merged_ctx).argv
-    assert json.loads(merged[merged.index("--settings") + 1]) == {"attribution": {"pr": ""}, **json.loads(RELATIVE_SETTINGS)}
+    assert json.loads(merged[merged.index("--settings") + 1]) == {
+        "attribution": {"pr": ""},
+        **json.loads(RELATIVE_SETTINGS),
+    }
     assert "own.json" not in merged
 
 
 def test_user_settings_pass_unchanged_when_start_has_no_settings_of_its_own():
     ctx, _ = context()
 
-    assert build_launch(PROFILE, ["--settings=/s.json", "--", "--settings", "x"], ctx).argv == ["--add-dir=/repo dir", "--model", "sonnet", "--settings=/s.json", "--", "--settings", "x"]
+    assert build_launch(PROFILE, ["--settings=/s.json", "--", "--settings", "x"], ctx).argv == [
+        "--add-dir=/repo dir",
+        "--model",
+        "sonnet",
+        "--settings=/s.json",
+        "--",
+        "--settings",
+        "x",
+    ]
 
 
 def test_an_option_value_is_never_read_as_the_option_it_looks_like():
     # -p is --print, a flag without a value, so in `-p --model x` the --model is the user's own.
-    assert build_launch(PROFILE, ["-p", "--model", "x"], context()[0]).argv == ["--add-dir=/repo dir", "-p", "--model", "x"]
-    assert build_launch(PROFILE, ["--name", "--model"], context()[0]).argv == ["--add-dir=/repo dir", "--model", "sonnet", "--name", "--model"]
+    assert build_launch(PROFILE, ["-p", "--model", "x"], context()[0]).argv == [
+        "--add-dir=/repo dir",
+        "-p",
+        "--model",
+        "x",
+    ]
+    assert build_launch(PROFILE, ["--name", "--model"], context()[0]).argv == [
+        "--add-dir=/repo dir",
+        "--model",
+        "sonnet",
+        "--name",
+        "--model",
+    ]
 
 
 def test_a_settings_flag_without_a_value_stays_for_claude_to_report():
@@ -129,17 +209,26 @@ def test_subcommand_gets_only_the_environment():
 
 
 def test_merge_settings_merges_nested_objects_concatenates_lists_and_later_layers_win():
-    assert merge_settings({"attribution": {"commit": "a", "pr": "b"}, "x": 1, "l": [1, 2]}, None, {"attribution": {"pr": "c"}, "x": {"y": 2}, "l": [2, 3]}) == {
-        "attribution": {"commit": "a", "pr": "c"}, "x": {"y": 2}, "l": [1, 2, 3],
+    assert merge_settings(
+        {"attribution": {"commit": "a", "pr": "b"}, "x": 1, "l": [1, 2]},
+        None,
+        {"attribution": {"pr": "c"}, "x": {"y": 2}, "l": [2, 3]},
+    ) == {
+        "attribution": {"commit": "a", "pr": "c"},
+        "x": {"y": 2},
+        "l": [1, 2, 3],
     }
 
 
-@pytest.mark.parametrize("argv, expected", [
-    (["work"], (None, "work", [])),
-    (["work", "--config", "x", "-p"], (None, "work", ["--config", "x", "-p"])),
-    (["--config", "/c.yaml", "work", "--model", "opus"], (Path("/c.yaml"), "work", ["--model", "opus"])),
-    (["--config=/c.yaml", "work"], (Path("/c.yaml"), "work", [])),
-])
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        (["work"], (None, "work", [])),
+        (["work", "--config", "x", "-p"], (None, "work", ["--config", "x", "-p"])),
+        (["--config", "/c.yaml", "work", "--model", "opus"], (Path("/c.yaml"), "work", ["--model", "opus"])),
+        (["--config=/c.yaml", "work"], (Path("/c.yaml"), "work", [])),
+    ],
+)
 def test_parse_args_passes_everything_after_the_profile_to_claude(argv, expected):
     assert parse_args(argv) == expected
 
@@ -172,8 +261,12 @@ def test_logical_cwd_keeps_a_symlinked_pwd(tmp_path, monkeypatch):
 def test_stale_cleanup_removes_legacy_wrappers_and_launchers_of_removed_profiles(tmp_path):
     legacy = generate_wrapper_script("old", tmp_path / "profiles/old", "", {}, [], None, Path("/bin/cc-auth-switch"))
     (tmp_path / "claude-old").write_text(legacy)
-    (tmp_path / "claude-gone").write_text(generate_launcher_script("gone", "", Path("/bin/cc-auth-switch"), Path("/c.yaml")))
-    (tmp_path / "claude-kept").write_text(generate_launcher_script("kept", "", Path("/bin/cc-auth-switch"), Path("/c.yaml")))
+    (tmp_path / "claude-gone").write_text(
+        generate_launcher_script("gone", "", Path("/bin/cc-auth-switch"), Path("/c.yaml"))
+    )
+    (tmp_path / "claude-kept").write_text(
+        generate_launcher_script("kept", "", Path("/bin/cc-auth-switch"), Path("/c.yaml"))
+    )
     (tmp_path / "claude-foreign").write_text("#!/bin/sh\nexec claude\n")
 
     cleanup_stale_scripts(tmp_path, {"claude-kept"})
@@ -200,7 +293,9 @@ def test_start_does_not_load_the_installer(sandbox):
         "os.execvpe = fake_exec\n"
         "main(['start', '--config', sys.argv[1], 'work', '-p', 'hi'])\n"
     )
-    result = subprocess.run([sys.executable, "-c", script, str(config)], env=sandbox.env, capture_output=True, text=True, cwd=sandbox.home)
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(config)], env=sandbox.env, capture_output=True, text=True, cwd=sandbox.home
+    )
 
     assert result.stdout.strip() == "[] ['-p', 'hi']", result.stderr
 
@@ -228,7 +323,10 @@ def test_secrets_check_stops_when_git_does_not_answer(hanging, monkeypatch, caps
         config.check_secrets_git_safety(secrets)
 
     assert exit_info.value.code == 1
-    assert f"git did not answer within 0.3 seconds while checking whether secrets file {secrets}" in capsys.readouterr().err
+    assert (
+        f"git did not answer within 0.3 seconds while checking whether secrets file {secrets}"
+        in capsys.readouterr().err
+    )
 
 
 def test_attribution_is_dropped_when_git_does_not_answer(hanging, monkeypatch, capsys):
@@ -279,7 +377,9 @@ def test_debug_variable_lets_the_traceback_through(work_config, monkeypatch):
 
 
 def test_launcher_keeps_a_multiline_description_in_its_comment():
-    script = generate_launcher_script("work", "first line\ntouch /tmp/pwned\r\nlast", Path("/bin/cc-auth-switch"), Path("/c.yaml"))
+    script = generate_launcher_script(
+        "work", "first line\ntouch /tmp/pwned\r\nlast", Path("/bin/cc-auth-switch"), Path("/c.yaml")
+    )
 
     assert script.splitlines() == [
         "#!/usr/bin/env bash",

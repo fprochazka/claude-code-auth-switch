@@ -9,7 +9,9 @@ BACKUPS = ".auth-switch-backups"
 def synced(sandbox):
     """Install two profiles from a source directory with every kind of copied file."""
     source_dir = sandbox.mkdir(".claude")
-    (source_dir / "settings.json").write_text(json.dumps({"theme": "dark", "plansDirectory": "~/plans"}, indent=2) + "\n")
+    (source_dir / "settings.json").write_text(
+        json.dumps({"theme": "dark", "plansDirectory": "~/plans"}, indent=2) + "\n"
+    )
     (source_dir / "keybindings.json").write_text("[]\n")
     (source_dir / "CLAUDE.md").write_text("# Shared instructions\n")
     sandbox.mkdir(".claude/skills")
@@ -37,7 +39,9 @@ def test_force_sync_backs_up_the_profile_files_it_replaces(sandbox, synced):
     profile = profiles / "work-team"
     (profile / "CLAUDE.md").write_text("# Local edit\n")
     settings = json.loads((profile / "settings.json").read_text())
-    (profile / "settings.json").write_text(json.dumps({**settings, "permissions": {"allow": ["Bash(ls)"]}}, indent=2) + "\n")
+    (profile / "settings.json").write_text(
+        json.dumps({**settings, "permissions": {"allow": ["Bash(ls)"]}}, indent=2) + "\n"
+    )
     edited_settings = (profile / "settings.json").read_text()
 
     result = sandbox.run_install("--config", config, "--sync", "--force")
@@ -60,7 +64,11 @@ def test_force_sync_without_changes_is_quiet_and_backs_up_nothing(sandbox, synce
 
     result = sandbox.run_install("--config", config, "--sync", "--force")
 
-    assert detail_lines(result.stdout) == ["  in sync, nothing changed", "  in sync, nothing changed", "  nothing to clean up"]
+    assert detail_lines(result.stdout) == [
+        "  in sync, nothing changed",
+        "  in sync, nothing changed",
+        "  nothing to clean up",
+    ]
     assert "Backups of replaced files" not in result.stdout
     assert not list(profiles.glob(f"*/{BACKUPS}"))
 
@@ -75,13 +83,15 @@ def test_every_sync_that_replaces_a_file_keeps_its_own_backup(sandbox, synced, f
 
     for run in range(25):
         # Only a removed line, so plain --sync replaces the file without reporting a divergence.
-        keybindings.write_text("".join(lines[:run] + lines[run + 1:]))
+        keybindings.write_text("".join(lines[:run] + lines[run + 1 :]))
         result = sandbox.run_install("--config", config, *flags)
         assert "never deletes them; remove them with rm" in result.stdout.splitlines()[-1]
 
     backups = sorted((profiles / "personal" / BACKUPS).iterdir())
     assert len(backups) == 25
-    assert sorted(next(iter(set(lines) - set((b / "keybindings.json").read_text().splitlines(keepends=True)))) for b in backups) == sorted(lines)
+    assert sorted(
+        next(iter(set(lines) - set((b / "keybindings.json").read_text().splitlines(keepends=True)))) for b in backups
+    ) == sorted(lines)
 
 
 def test_plain_install_backs_up_the_files_it_patches(sandbox, synced):
@@ -90,7 +100,9 @@ def test_plain_install_backs_up_the_files_it_patches(sandbox, synced):
     (profile / ".claude.json").write_text('{"numStartups": 3}\n')
     old_settings = (profile / "settings.json").read_text()
     (sandbox.home / ".claude.json").write_text(json.dumps({"mcpServers": {"tool": {"command": "tool"}}}) + "\n")
-    sandbox.write("auth-switch.yaml", (sandbox.home / "auth-switch.yaml").read_text().replace("from profile", "changed"))
+    sandbox.write(
+        "auth-switch.yaml", (sandbox.home / "auth-switch.yaml").read_text().replace("from profile", "changed")
+    )
 
     result = sandbox.run_install("--config", config)
 
@@ -127,4 +139,6 @@ def test_a_profile_with_changes_gets_no_in_sync_line(sandbox, synced):
 
     result = sandbox.run_install("--config", config)
 
-    assert "\nProfile: personal\n  copied CLAUDE.md\n\nProfile: work-team\n  in sync, nothing changed\n" in result.stdout
+    assert (
+        "\nProfile: personal\n  copied CLAUDE.md\n\nProfile: work-team\n  in sync, nothing changed\n" in result.stdout
+    )

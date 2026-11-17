@@ -58,12 +58,22 @@ def test_hook_appends_the_contract_line(hook_env):
 
 def test_hook_records_the_role_from_the_environment(hook_env):
     env, payload, profile_dir, log = hook_env
-    role_env = {"FP_CC_AUTH_SWITCH_ROLE": "dispatcher", "FP_CC_AUTH_SWITCH_ROLE_PROMPT": "/roles/dispatcher.md", "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": "append"}
+    role_env = {
+        "FP_CC_AUTH_SWITCH_ROLE": "dispatcher",
+        "FP_CC_AUTH_SWITCH_ROLE_PROMPT": "/roles/dispatcher.md",
+        "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": "append",
+    }
 
     run_hook({**env, **role_env, "CLAUDE_PID": "4242"}, json.dumps({**payload, "source": "resume"}))
 
     [line] = read_lines(log)
-    assert (line["v"], line["source"], line["role"], line["role_prompt"], line["role_prompt_mode"]) == (1, "resume", "dispatcher", "/roles/dispatcher.md", "append")
+    assert (line["v"], line["source"], line["role"], line["role_prompt"], line["role_prompt_mode"]) == (
+        1,
+        "resume",
+        "dispatcher",
+        "/roles/dispatcher.md",
+        "append",
+    )
 
 
 def test_hook_appends_one_line_per_start(hook_env):
@@ -93,7 +103,14 @@ def test_hook_without_pid_record_or_profile_env_writes_nulls(hook_env, sandbox):
     run_hook(sandbox.env, json.dumps(payload))
 
     [line] = read_lines(log)
-    assert (line["pid"], line["profile"], line["config_dir"], line["role"], line["role_prompt"], line["role_prompt_mode"]) == (None,) * 6
+    assert (
+        line["pid"],
+        line["profile"],
+        line["config_dir"],
+        line["role"],
+        line["role_prompt"],
+        line["role_prompt_mode"],
+    ) == (None,) * 6
 
 
 def test_hook_ignores_an_empty_transcript_path(hook_env):
@@ -124,7 +141,9 @@ FOREIGN_HOOK = {"matcher": "", "hooks": [{"type": "command", "command": "bash ~/
 @pytest.fixture
 def install_config(sandbox):
     source_dir = sandbox.mkdir(".claude")
-    (source_dir / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": [FOREIGN_HOOK]}, "theme": "dark"}, indent=2) + "\n")
+    (source_dir / "settings.json").write_text(
+        json.dumps({"hooks": {"SessionStart": [FOREIGN_HOOK]}, "theme": "dark"}, indent=2) + "\n"
+    )
     config = sandbox.write(
         "auth-switch.yaml",
         f"source_dir: {source_dir}\n"
@@ -166,7 +185,10 @@ def test_install_is_idempotent_and_replaces_an_old_hook_path(sandbox, install_co
     data = json.loads(settings_path.read_text())
     data["hooks"]["SessionStart"][:0] = [
         {"matcher": "startup", "hooks": [{"type": "command", "command": "/old/bin/claude-auth-switch-session-start"}]},
-        {"matcher": "", "hooks": [{"type": "command", "command": "'/old path/bin/cc-auth-switch' session-start", "timeout": 10}]},
+        {
+            "matcher": "",
+            "hooks": [{"type": "command", "command": "'/old path/bin/cc-auth-switch' session-start", "timeout": 10}],
+        },
     ]
     settings_path.write_text(json.dumps(data, indent=2) + "\n")
 

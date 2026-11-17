@@ -49,8 +49,19 @@ def context(environ=None, attribution=None, files=("/roles/dispatcher.md", "/rol
     )
 
 
-PROFILE = Profile(name="work", config_dir=Path("/profiles/work"), env={"SHARED": "profile", "PROFILE_ONLY": "1"}, add_dirs=(Path("/profile dir"),), model="sonnet")
-ROLES = roles(dispatcher=FULL_ROLE, worker={"prompt": {"file": "/roles/worker.md", "mode": "replace"}}, hooked={"prompt": {"file": "/roles/worker.md", "mode": "none"}}, bare={})
+PROFILE = Profile(
+    name="work",
+    config_dir=Path("/profiles/work"),
+    env={"SHARED": "profile", "PROFILE_ONLY": "1"},
+    add_dirs=(Path("/profile dir"),),
+    model="sonnet",
+)
+ROLES = roles(
+    dispatcher=FULL_ROLE,
+    worker={"prompt": {"file": "/roles/worker.md", "mode": "replace"}},
+    hooked={"prompt": {"file": "/roles/worker.md", "mode": "none"}},
+    bare={},
+)
 
 
 # Config validation
@@ -60,7 +71,12 @@ def test_every_key_of_the_plan_example_resolves():
     role = ROLES["dispatcher"]
 
     assert role.prompt == RolePrompt(file="/roles/dispatcher.md", mode="append")
-    assert (role.autocompact, role.tools, role.add_dirs, role.strict_mcp_config) == ("250000", ("Bash", "Read"), ("/role dir",), True)
+    assert (role.autocompact, role.tools, role.add_dirs, role.strict_mcp_config) == (
+        "250000",
+        ("Bash", "Read"),
+        ("/role dir",),
+        True,
+    )
     assert json.loads(role.agents) == FULL_ROLE["agents"]
     assert role.env == {"ROLE_ONLY": "1", "SHARED": "role", "NUMBER": "3"}
 
@@ -78,48 +94,87 @@ def test_empty_role_and_missing_section_resolve():
 def test_prompt_mode_defaults_to_append_and_expands_home(monkeypatch):
     monkeypatch.setenv("HOME", "/home/me")
 
-    assert roles(worker={"prompt": {"file": "~/roles/worker.md"}})["worker"].prompt == RolePrompt(file="/home/me/roles/worker.md", mode="append")
+    assert roles(worker={"prompt": {"file": "~/roles/worker.md"}})["worker"].prompt == RolePrompt(
+        file="/home/me/roles/worker.md", mode="append"
+    )
 
 
-@pytest.mark.parametrize("role_config, message", [
-    ({"modle": "opus"}, "role 'r': unknown key 'modle'"),
-    ("opus", "role 'r': must be a mapping"),
-    ({"model": 3}, "role 'r': 'model' must be a non-empty string"),
-    ({"tools": "Bash"}, "role 'r': 'tools' must be a list of non-empty strings"),
-    ({"extra_args": ["--x", 1]}, "role 'r': 'extra_args' must be a list"),
-    ({"extra_args": ["--add-dir", "/a"]}, "role 'r': 'extra_args' item '--add-dir' takes a value; write it as --add-dir=<value>"),
-    ({"extra_args": ["--debug"]}, "role 'r': 'extra_args' item '--debug' takes a value; write it as --debug=<value>"),
-    ({"extra_args": ["-r"]}, "role 'r': 'extra_args' item '-r' takes a value; write it as --resume=<value>"),
-    ({"extra_args": ["--allowedTools"]}, "role 'r': 'extra_args' item '--allowedTools' takes a value; write it as --allowed-tools=<value>"),
-    ({"extra_args": ["opus"]}, "role 'r': 'extra_args' item 'opus' is not an option"),
-    ({"extra_args": ["--max-turns"]}, "role 'r': 'extra_args' item '--max-turns' is not an option without a value in Claude Code 2.1.325"),
-    ({"extra_args": ["-n=x"]}, "role 'r': 'extra_args' item '-n=x' takes a value; write it as --name=<value>"),
-    ({"strict_mcp_config": "yes"}, "role 'r': 'strict_mcp_config' must be true or false"),
-    ({"autocompact": True}, "role 'r': 'autocompact' must be a number of tokens or 'auto'"),
-    ({"settings": ["x"]}, "role 'r': 'settings' must be a mapping"),
-    ({"agents": 1}, "role 'r': 'agents' must be"),
-    ({"env": {"A": ["x"]}}, "role 'r': env variable 'A' must have a string or number value"),
-    ({"prompt": "/r.md"}, "role 'r': 'prompt' must be a mapping"),
-    ({"prompt": {"file": "roles/r.md"}}, "role 'r': 'prompt.file' must be an absolute path"),
-    ({"prompt": {"mode": "append"}}, "role 'r': 'prompt.file' must be the absolute path"),
-    ({"prompt": {"file": "/r.md", "mode": "prepend"}}, "role 'r': 'prompt.mode' must be one of append, replace, none"),
-    ({"prompt": {"file": "/r.md", "path": "/x"}}, "role 'r': 'prompt' has unknown key 'path'"),
-    ({"model": "op\0us"}, "role 'r': 'model' contains a NUL character"),
-    ({"extra_args": ["--x\0"]}, "role 'r': an entry of 'extra_args' contains a NUL character"),
-    ({"plugin_dirs": ["/p\0"]}, "role 'r': an entry of 'plugin_dirs' contains a NUL character"),
-    ({"mcp_config": ["/m\0"]}, "role 'r': an entry of 'mcp_config' contains a NUL character"),
-    ({"autocompact": "1\0"}, "role 'r': 'autocompact' contains a NUL character"),
-    ({"agents": "/a\0.json"}, "role 'r': 'agents' contains a NUL character"),
-    ({"prompt": {"file": "/r\0.md"}}, "role 'r': 'prompt.file' contains a NUL character"),
-    ({"env": {"A-B": "1"}}, "role 'r': env variable name 'A-B' is not a valid shell variable name"),
-    ({"env": {"A": "x\0"}}, "role 'r': env value of 'A' contains a NUL character"),
-    ({"env": {"CLAUDE_CONFIG_DIR": "/x"}}, "role 'r': env variable 'CLAUDE_CONFIG_DIR' is reserved"),
-    ({"env": {"FP_CC_AUTH_SWITCH_PROFILE": "x"}}, "role 'r': env variable 'FP_CC_AUTH_SWITCH_PROFILE' is reserved"),
-    *[({"env": {key: "x"}}, f"role 'r': env variable '{key}' is reserved") for key in (
-        "PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "OLDPWD", "SHLVL", "LANG", "TERM", "DISPLAY", "WAYLAND_DISPLAY",
-        "LC_ALL", "TMUX", "TMUX_PANE", "XDG_RUNTIME_DIR", "SSH_AUTH_SOCK", "LD_PRELOAD",
-    )],
-])
+@pytest.mark.parametrize(
+    "role_config, message",
+    [
+        ({"modle": "opus"}, "role 'r': unknown key 'modle'"),
+        ("opus", "role 'r': must be a mapping"),
+        ({"model": 3}, "role 'r': 'model' must be a non-empty string"),
+        ({"tools": "Bash"}, "role 'r': 'tools' must be a list of non-empty strings"),
+        ({"extra_args": ["--x", 1]}, "role 'r': 'extra_args' must be a list"),
+        (
+            {"extra_args": ["--add-dir", "/a"]},
+            "role 'r': 'extra_args' item '--add-dir' takes a value; write it as --add-dir=<value>",
+        ),
+        (
+            {"extra_args": ["--debug"]},
+            "role 'r': 'extra_args' item '--debug' takes a value; write it as --debug=<value>",
+        ),
+        ({"extra_args": ["-r"]}, "role 'r': 'extra_args' item '-r' takes a value; write it as --resume=<value>"),
+        (
+            {"extra_args": ["--allowedTools"]},
+            "role 'r': 'extra_args' item '--allowedTools' takes a value; write it as --allowed-tools=<value>",
+        ),
+        ({"extra_args": ["opus"]}, "role 'r': 'extra_args' item 'opus' is not an option"),
+        (
+            {"extra_args": ["--max-turns"]},
+            "role 'r': 'extra_args' item '--max-turns' is not an option without a value in Claude Code 2.1.325",
+        ),
+        ({"extra_args": ["-n=x"]}, "role 'r': 'extra_args' item '-n=x' takes a value; write it as --name=<value>"),
+        ({"strict_mcp_config": "yes"}, "role 'r': 'strict_mcp_config' must be true or false"),
+        ({"autocompact": True}, "role 'r': 'autocompact' must be a number of tokens or 'auto'"),
+        ({"settings": ["x"]}, "role 'r': 'settings' must be a mapping"),
+        ({"agents": 1}, "role 'r': 'agents' must be"),
+        ({"env": {"A": ["x"]}}, "role 'r': env variable 'A' must have a string or number value"),
+        ({"prompt": "/r.md"}, "role 'r': 'prompt' must be a mapping"),
+        ({"prompt": {"file": "roles/r.md"}}, "role 'r': 'prompt.file' must be an absolute path"),
+        ({"prompt": {"mode": "append"}}, "role 'r': 'prompt.file' must be the absolute path"),
+        (
+            {"prompt": {"file": "/r.md", "mode": "prepend"}},
+            "role 'r': 'prompt.mode' must be one of append, replace, none",
+        ),
+        ({"prompt": {"file": "/r.md", "path": "/x"}}, "role 'r': 'prompt' has unknown key 'path'"),
+        ({"model": "op\0us"}, "role 'r': 'model' contains a NUL character"),
+        ({"extra_args": ["--x\0"]}, "role 'r': an entry of 'extra_args' contains a NUL character"),
+        ({"plugin_dirs": ["/p\0"]}, "role 'r': an entry of 'plugin_dirs' contains a NUL character"),
+        ({"mcp_config": ["/m\0"]}, "role 'r': an entry of 'mcp_config' contains a NUL character"),
+        ({"autocompact": "1\0"}, "role 'r': 'autocompact' contains a NUL character"),
+        ({"agents": "/a\0.json"}, "role 'r': 'agents' contains a NUL character"),
+        ({"prompt": {"file": "/r\0.md"}}, "role 'r': 'prompt.file' contains a NUL character"),
+        ({"env": {"A-B": "1"}}, "role 'r': env variable name 'A-B' is not a valid shell variable name"),
+        ({"env": {"A": "x\0"}}, "role 'r': env value of 'A' contains a NUL character"),
+        ({"env": {"CLAUDE_CONFIG_DIR": "/x"}}, "role 'r': env variable 'CLAUDE_CONFIG_DIR' is reserved"),
+        ({"env": {"FP_CC_AUTH_SWITCH_PROFILE": "x"}}, "role 'r': env variable 'FP_CC_AUTH_SWITCH_PROFILE' is reserved"),
+        *[
+            ({"env": {key: "x"}}, f"role 'r': env variable '{key}' is reserved")
+            for key in (
+                "PATH",
+                "HOME",
+                "USER",
+                "LOGNAME",
+                "SHELL",
+                "PWD",
+                "OLDPWD",
+                "SHLVL",
+                "LANG",
+                "TERM",
+                "DISPLAY",
+                "WAYLAND_DISPLAY",
+                "LC_ALL",
+                "TMUX",
+                "TMUX_PANE",
+                "XDG_RUNTIME_DIR",
+                "SSH_AUTH_SOCK",
+                "LD_PRELOAD",
+            )
+        ],
+    ],
+)
 def test_invalid_role_names_the_role_and_the_key(role_config, message):
     with pytest.raises(ConfigError, match=message.replace("(", r"\(")):
         roles(r=role_config)
@@ -146,46 +201,100 @@ def test_default_role_must_name_a_defined_role():
 
 
 def test_role_flags_follow_the_profile_and_come_before_the_user_arguments():
-    launch = build_launch(PROFILE, ["--agent-role", "dispatcher", "-p", "do it"], context(attribution={"attribution": {"pr": ""}}), ROLES)
+    launch = build_launch(
+        PROFILE, ["--agent-role", "dispatcher", "-p", "do it"], context(attribution={"attribution": {"pr": ""}}), ROLES
+    )
 
     assert launch.argv == [
-        "--add-dir=/profile dir", "--add-dir=/role dir",
-        "--settings", json.dumps({"attribution": {"pr": ""}, "autoCompactEnabled": True, "permissions": {"allow": ["Read"]}}),
-        "--effort", "high", "--permission-mode", "auto", "--autocompact", "250000", "--agents", json.dumps(FULL_ROLE["agents"]),
-        "--tools=Bash", "--tools=Read", "--allowed-tools=Bash(git:*)", "--disallowed-tools=WebFetch",
-        "--plugin-dir=/plugins/agent-roles", "--mcp-config=/mcp.json", "--strict-mcp-config",
-        "--append-system-prompt-file", "/roles/dispatcher.md", "--verbose",
-        "--model", "opus", "-p", "do it",
+        "--add-dir=/profile dir",
+        "--add-dir=/role dir",
+        "--settings",
+        json.dumps({"attribution": {"pr": ""}, "autoCompactEnabled": True, "permissions": {"allow": ["Read"]}}),
+        "--effort",
+        "high",
+        "--permission-mode",
+        "auto",
+        "--autocompact",
+        "250000",
+        "--agents",
+        json.dumps(FULL_ROLE["agents"]),
+        "--tools=Bash",
+        "--tools=Read",
+        "--allowed-tools=Bash(git:*)",
+        "--disallowed-tools=WebFetch",
+        "--plugin-dir=/plugins/agent-roles",
+        "--mcp-config=/mcp.json",
+        "--strict-mcp-config",
+        "--append-system-prompt-file",
+        "/roles/dispatcher.md",
+        "--verbose",
+        "--model",
+        "opus",
+        "-p",
+        "do it",
     ]
     assert launch.notes == ()
 
 
 def test_user_flags_win_over_the_role_and_list_flags_concatenate():
-    args = ["--agent-role=dispatcher", "--model", "haiku", "--effort=low", "--allowed-tools", "Edit", "--add-dir", "/mine", "--agents", "/a.json"]
+    args = [
+        "--agent-role=dispatcher",
+        "--model",
+        "haiku",
+        "--effort=low",
+        "--allowed-tools",
+        "Edit",
+        "--add-dir",
+        "/mine",
+        "--agents",
+        "/a.json",
+    ]
 
     argv = build_launch(PROFILE, args, context(), ROLES).argv
 
     assert "opus" not in argv and "sonnet" not in argv and "high" not in argv
     assert argv.count("--effort") == 0 and argv.count("--agents") == 1
-    assert ["--allowed-tools=Bash(git:*)", "--allowed-tools", "Edit"] == [arg for arg in argv if arg.startswith("--allowed-tools") or arg == "Edit"]
+    assert ["--allowed-tools=Bash(git:*)", "--allowed-tools", "Edit"] == [
+        arg for arg in argv if arg.startswith("--allowed-tools") or arg == "Edit"
+    ]
     assert argv[-9:] == args[1:]
 
 
 def test_user_settings_are_merged_over_the_role_settings():
-    argv = build_launch(PROFILE, ["--agent-role", "dispatcher", "--settings", '{"autoCompactEnabled": false, "permissions": {"allow": ["Bash"]}}'], context(), ROLES).argv
+    argv = build_launch(
+        PROFILE,
+        [
+            "--agent-role",
+            "dispatcher",
+            "--settings",
+            '{"autoCompactEnabled": false, "permissions": {"allow": ["Bash"]}}',
+        ],
+        context(),
+        ROLES,
+    ).argv
 
-    assert json.loads(argv[argv.index("--settings") + 1]) == {"autoCompactEnabled": False, "permissions": {"allow": ["Read", "Bash"]}}
+    assert json.loads(argv[argv.index("--settings") + 1]) == {
+        "autoCompactEnabled": False,
+        "permissions": {"allow": ["Read", "Bash"]},
+    }
     assert argv.count("--settings") == 1
 
 
 def test_role_env_is_merged_over_the_profile_and_role_variables_are_set():
     env = build_launch(PROFILE, ["--agent-role", "dispatcher"], context(), ROLES).env
 
-    assert {key: env[key] for key in ("SHARED", "PROFILE_ONLY", "ROLE_ONLY", "NUMBER")} == {"SHARED": "role", "PROFILE_ONLY": "1", "ROLE_ONLY": "1", "NUMBER": "3"}
+    assert {key: env[key] for key in ("SHARED", "PROFILE_ONLY", "ROLE_ONLY", "NUMBER")} == {
+        "SHARED": "role",
+        "PROFILE_ONLY": "1",
+        "ROLE_ONLY": "1",
+        "NUMBER": "3",
+    }
     assert [env[key] for key in ROLE_ENV] == ["dispatcher", "/roles/dispatcher.md", "append"]
 
 
-@pytest.mark.parametrize("role, flag, mode", [("worker", ["--system-prompt-file", "/roles/worker.md"], "replace"), ("hooked", [], "none")])
+@pytest.mark.parametrize(
+    "role, flag, mode", [("worker", ["--system-prompt-file", "/roles/worker.md"], "replace"), ("hooked", [], "none")]
+)
 def test_prompt_modes(role, flag, mode):
     launch = build_launch(PROFILE, ["--agent-role", role], context(), ROLES)
 
@@ -203,12 +312,21 @@ def test_a_users_own_prompt_flag_wins_and_the_hooks_get_mode_none():
 
 def test_role_env_keys_are_exported_with_value_hashes_and_cleared_on_the_next_launch():
     dispatcher = build_launch(PROFILE, ["--agent-role", "dispatcher"], context({"PATH": "/bin"}), ROLES).env
-    assert dispatcher["FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS"] == ",".join(f"{key}={hashlib.sha256(value.encode()).hexdigest()[:16]}" for key, value in (("NUMBER", "3"), ("ROLE_ONLY", "1"), ("SHARED", "role")))
+    assert dispatcher["FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS"] == ",".join(
+        f"{key}={hashlib.sha256(value.encode()).hexdigest()[:16]}"
+        for key, value in (("NUMBER", "3"), ("ROLE_ONLY", "1"), ("SHARED", "role"))
+    )
 
     # A launch from the dispatcher's Bash: its role's env is gone, the profile's own SHARED wins anyway.
     for args in ([], ["--agent-role", "worker"], ["mcp", "list"]):
         nested = build_launch(PROFILE, args, context(dispatcher), ROLES).env
-        assert ("ROLE_ONLY" in nested, "NUMBER" in nested, nested["SHARED"], "FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS" in nested, nested["PATH"]) == (False, False, "profile", False, "/bin"), args
+        assert (
+            "ROLE_ONLY" in nested,
+            "NUMBER" in nested,
+            nested["SHARED"],
+            "FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS" in nested,
+            nested["PATH"],
+        ) == (False, False, "profile", False, "/bin"), args
 
 
 def test_a_value_set_after_the_role_survives_the_next_launch():
@@ -220,7 +338,9 @@ def test_a_value_set_after_the_role_survives_the_next_launch():
 
 
 def test_a_malformed_inherited_key_list_clears_nothing():
-    env = build_launch(PROFILE, [], context({"FOO": "1", "FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS": "FOO,,=x,BAR=1"}), ROLES).env
+    env = build_launch(
+        PROFILE, [], context({"FOO": "1", "FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS": "FOO,,=x,BAR=1"}), ROLES
+    ).env
 
     assert env["FOO"] == "1" and "FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS" not in env
 
@@ -230,14 +350,21 @@ def test_inherited_role_variables_are_cleared_without_a_role():
 
     for args in ([], ["--agent-role", "none"], ["--agent-role", "bare"], ["mcp", "list"]):
         env = build_launch(PROFILE, args, context(inherited), ROLES).env
-        assert {key: env.get(key) for key in ROLE_ENV} == {"FP_CC_AUTH_SWITCH_ROLE": "bare" if "bare" in args else None, "FP_CC_AUTH_SWITCH_ROLE_PROMPT": None, "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": None}, args
+        assert {key: env.get(key) for key in ROLE_ENV} == {
+            "FP_CC_AUTH_SWITCH_ROLE": "bare" if "bare" in args else None,
+            "FP_CC_AUTH_SWITCH_ROLE_PROMPT": None,
+            "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": None,
+        }, args
 
 
 def test_default_role_applies_without_agent_role_and_none_turns_it_off():
     profile = Profile(name="work", config_dir=Path("/p"), default_role="worker")
 
     assert build_launch(profile, [], context(), ROLES).env["FP_CC_AUTH_SWITCH_ROLE"] == "worker"
-    assert build_launch(profile, ["--agent-role", "dispatcher"], context(), ROLES).env["FP_CC_AUTH_SWITCH_ROLE"] == "dispatcher"
+    assert (
+        build_launch(profile, ["--agent-role", "dispatcher"], context(), ROLES).env["FP_CC_AUTH_SWITCH_ROLE"]
+        == "dispatcher"
+    )
     none = build_launch(profile, ["--agent-role", "none"], context(), ROLES)
     assert ("FP_CC_AUTH_SWITCH_ROLE" not in none.env, none.argv) == (True, [])
 
@@ -249,7 +376,14 @@ def test_agent_role_never_reaches_claude_and_subcommands_get_no_role():
 
 
 def test_arguments_after_double_dash_stay_with_claude():
-    assert build_launch(PROFILE, ["--", "--agent-role", "x"], context(), ROLES).argv == ["--add-dir=/profile dir", "--model", "sonnet", "--", "--agent-role", "x"]
+    assert build_launch(PROFILE, ["--", "--agent-role", "x"], context(), ROLES).argv == [
+        "--add-dir=/profile dir",
+        "--model",
+        "sonnet",
+        "--",
+        "--agent-role",
+        "x",
+    ]
 
 
 @pytest.mark.parametrize("args", [["--version"], ["-v"], ["-p", "x", "--help"], ["-h"]])
@@ -263,12 +397,15 @@ def test_version_and_help_pass_through_without_role_or_prompt_check(args):
         assert not any(key in launch.env for key in ROLE_ENV)
 
 
-@pytest.mark.parametrize("args", [["--append-system-prompt", "-h"], ["--system-prompt", "--help"], ["--name", "-v"], ["--session-id", "--version"]])
+@pytest.mark.parametrize(
+    "args",
+    [["--append-system-prompt", "-h"], ["--system-prompt", "--help"], ["--name", "-v"], ["--session-id", "--version"]],
+)
 def test_help_or_version_as_the_value_of_an_option_starts_a_session(args):
     launch = build_launch(PROFILE, ["--agent-role", "worker", *args], context(), ROLES)
 
     assert launch.env["FP_CC_AUTH_SWITCH_ROLE"] == "worker"
-    assert launch.argv[0] == "--add-dir=/profile dir" and "--model" in launch.argv and launch.argv[-len(args):] == args
+    assert launch.argv[0] == "--add-dir=/profile dir" and "--model" in launch.argv and launch.argv[-len(args) :] == args
 
 
 def test_agent_role_as_the_value_of_an_option_is_a_value():
@@ -278,21 +415,29 @@ def test_agent_role_as_the_value_of_an_option_is_a_value():
 def test_help_after_double_dash_is_a_prompt_word():
     argv = build_launch(PROFILE, ["--", "-h"], context(), ROLES).argv
 
-    assert "--model" in argv and argv[argv.index("--"):][:2] == ["--", "-h"]
+    assert "--model" in argv and argv[argv.index("--") :][:2] == ["--", "-h"]
 
 
 def test_agent_role_inside_a_subcommand_belongs_to_the_subcommand():
-    assert build_launch(PROFILE, ["--agent-role", "worker", "mcp", "add", "--agent-role", "x"], context(), ROLES).argv == ["mcp", "add", "--agent-role", "x"]
+    assert build_launch(
+        PROFILE, ["--agent-role", "worker", "mcp", "add", "--agent-role", "x"], context(), ROLES
+    ).argv == ["mcp", "add", "--agent-role", "x"]
 
 
-@pytest.mark.parametrize("args, message", [
-    (["-p", "hi", "--agent-role", "worker"], "--agent-role must come before the arguments for claude"),
-    (["-c", "--agent-role=worker"], "--agent-role must come before the arguments for claude"),
-    (["--agent-role="], "--agent-role needs a role name"),
-    (["--agent-role", "-p"], "--agent-role needs a role name"),
-    (["--agent-role", "ghost"], r"--agent-role: role 'ghost' is not defined in the config \(defined roles: bare, dispatcher, hooked, worker\)"),
-    (["--agent-role"], "--agent-role needs a role name, or 'none'"),
-])
+@pytest.mark.parametrize(
+    "args, message",
+    [
+        (["-p", "hi", "--agent-role", "worker"], "--agent-role must come before the arguments for claude"),
+        (["-c", "--agent-role=worker"], "--agent-role must come before the arguments for claude"),
+        (["--agent-role="], "--agent-role needs a role name"),
+        (["--agent-role", "-p"], "--agent-role needs a role name"),
+        (
+            ["--agent-role", "ghost"],
+            r"--agent-role: role 'ghost' is not defined in the config \(defined roles: bare, dispatcher, hooked, worker\)",
+        ),
+        (["--agent-role"], "--agent-role needs a role name, or 'none'"),
+    ],
+)
 def test_unknown_or_missing_agent_role_stops_the_launch(args, message):
     with pytest.raises(LaunchError, match=message):
         build_launch(PROFILE, args, context(), ROLES)
@@ -331,7 +476,9 @@ def role_launch(sandbox):
     env = {**sandbox.env, "PATH": f"{fake_bin}{os.pathsep}{sandbox.env['PATH']}", "FP_CC_AUTH_SWITCH_ROLE": "inherited"}
 
     def run(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run([str(sandbox.home / "bin/claude-work"), *args], cwd=sandbox.home, env=env, capture_output=True, text=True)
+        return subprocess.run(
+            [str(sandbox.home / "bin/claude-work"), *args], cwd=sandbox.home, env=env, capture_output=True, text=True
+        )
 
     return run, config, prompt
 
@@ -343,7 +490,13 @@ def test_launcher_applies_the_default_role(role_launch):
 
     assert json.loads(result.stdout) == {
         "argv": ["--append-system-prompt-file", str(prompt), "--model", "opus", "-p", "hi"],
-        "env": {"FP_CC_AUTH_SWITCH_PROFILE": "work", "FP_CC_AUTH_SWITCH_ROLE": "dispatcher", "FP_CC_AUTH_SWITCH_ROLE_PROMPT": str(prompt), "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": "append", "ROLE_ONLY": "1"},
+        "env": {
+            "FP_CC_AUTH_SWITCH_PROFILE": "work",
+            "FP_CC_AUTH_SWITCH_ROLE": "dispatcher",
+            "FP_CC_AUTH_SWITCH_ROLE_PROMPT": str(prompt),
+            "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": "append",
+            "ROLE_ONLY": "1",
+        },
     }
     assert json.loads(run("--agent-role", "none").stdout)["env"]["FP_CC_AUTH_SWITCH_ROLE"] is None
 
@@ -392,14 +545,24 @@ def resume_context(recorded=None, newest=None, **kwargs) -> tuple[LaunchContext,
     return dataclasses.replace(context(**kwargs), recorded_start=recorded_start, newest_start=newest_start), calls
 
 
-@pytest.mark.parametrize("args", [["--resume", SESSION], ["-r", SESSION], [f"--resume={SESSION}"], [f"-r{SESSION}"], ["--session-id", SESSION]])
+@pytest.mark.parametrize(
+    "args",
+    [["--resume", SESSION], ["-r", SESSION], [f"--resume={SESSION}"], [f"-r{SESSION}"], ["--session-id", SESSION]],
+)
 def test_resume_reapplies_the_recorded_role(args):
     ctx, calls = resume_context(recorded={"v": 1, "role": "worker"})
 
     launch = build_launch(PROFILE, args, ctx, ROLES)
 
     assert launch.env["FP_CC_AUTH_SWITCH_ROLE"] == "worker"
-    assert launch.argv == ["--add-dir=/profile dir", "--system-prompt-file", "/roles/worker.md", "--model", "sonnet", *args]
+    assert launch.argv == [
+        "--add-dir=/profile dir",
+        "--system-prompt-file",
+        "/roles/worker.md",
+        "--model",
+        "sonnet",
+        *args,
+    ]
     assert (launch.notes, calls[0]) == ((), ("recorded", Path("/profiles/work"), SESSION, "/work"))
 
 
@@ -420,27 +583,41 @@ def test_session_id_of_a_new_session_keeps_the_default_role():
 
 
 def test_resume_with_the_recorded_role_keeps_the_snapshot():
-    launch = build_launch(PROFILE, ["--agent-role", "worker", "-r", SESSION], resume_context(recorded={"role": "worker"})[0], ROLES)
+    launch = build_launch(
+        PROFILE, ["--agent-role", "worker", "-r", SESSION], resume_context(recorded={"role": "worker"})[0], ROLES
+    )
 
     assert ("--system-prompt-snapshot" in launch.argv, launch.notes) == (False, ())
 
 
-@pytest.mark.parametrize("agent_role, recorded, label", [
-    ("dispatcher", {"role": "worker"}, "which ran as role 'worker', with role 'dispatcher'"),
-    ("none", {"role": "worker"}, "which ran as role 'worker', with no role"),
-    ("worker", None, "which ran as no role, with role 'worker'"),
-])
+@pytest.mark.parametrize(
+    "agent_role, recorded, label",
+    [
+        ("dispatcher", {"role": "worker"}, "which ran as role 'worker', with role 'dispatcher'"),
+        ("none", {"role": "worker"}, "which ran as role 'worker', with no role"),
+        ("worker", None, "which ran as no role, with role 'worker'"),
+    ],
+)
 def test_resume_with_another_role_turns_the_snapshot_off(agent_role, recorded, label):
-    launch = build_launch(PROFILE, ["--agent-role", agent_role, "--resume", SESSION], resume_context(recorded=recorded)[0], ROLES)
+    launch = build_launch(
+        PROFILE, ["--agent-role", agent_role, "--resume", SESSION], resume_context(recorded=recorded)[0], ROLES
+    )
 
-    assert launch.argv[launch.argv.index("--system-prompt-snapshot"):][:2] == ["--system-prompt-snapshot", "off"]
+    assert launch.argv[launch.argv.index("--system-prompt-snapshot") :][:2] == ["--system-prompt-snapshot", "off"]
     assert launch.argv[-2:] == ["--resume", SESSION]
     assert launch.env.get("FP_CC_AUTH_SWITCH_ROLE") == (None if agent_role == "none" else agent_role)
-    assert launch.notes == (f"resuming session {SESSION}, {label}: --system-prompt-snapshot off sends the new system prompt, at the cost of prompt cache reuse for this run",)
+    assert launch.notes == (
+        f"resuming session {SESSION}, {label}: --system-prompt-snapshot off sends the new system prompt, at the cost of prompt cache reuse for this run",
+    )
 
 
 def test_a_users_own_snapshot_flag_wins():
-    launch = build_launch(PROFILE, ["--agent-role", "worker", "-r", SESSION, "--system-prompt-snapshot=on"], resume_context(recorded={"role": "dispatcher"})[0], ROLES)
+    launch = build_launch(
+        PROFILE,
+        ["--agent-role", "worker", "-r", SESSION, "--system-prompt-snapshot=on"],
+        resume_context(recorded={"role": "dispatcher"})[0],
+        ROLES,
+    )
 
     assert launch.argv.count("off") == 0 and launch.notes == ()
 
@@ -449,7 +626,9 @@ def test_resume_of_a_role_the_config_no_longer_defines_warns_and_resumes_without
     launch = build_launch(PROFILE, ["--resume", SESSION], resume_context(recorded={"role": "retired"})[0], ROLES)
 
     assert "FP_CC_AUTH_SWITCH_ROLE" not in launch.env
-    assert launch.notes == (f"warning: session {SESSION} ran as role 'retired', which the config no longer defines; resuming it without a role",)
+    assert launch.notes == (
+        f"warning: session {SESSION} ran as role 'retired', which the config no longer defines; resuming it without a role",
+    )
 
 
 def test_continue_gets_no_role_and_a_notice_when_the_newest_session_had_one():
@@ -459,7 +638,9 @@ def test_continue_gets_no_role_and_a_notice_when_the_newest_session_had_one():
     quiet = build_launch(profile, ["--continue"], resume_context(newest={})[0], ROLES)
 
     assert "FP_CC_AUTH_SWITCH_ROLE" not in launch.env and "FP_CC_AUTH_SWITCH_ROLE" not in quiet.env
-    assert launch.notes == ("--continue starts without a role; the newest session here ran as role 'dispatcher', add --agent-role dispatcher to keep it",)
+    assert launch.notes == (
+        "--continue starts without a role; the newest session here ran as role 'dispatcher', add --agent-role dispatcher to keep it",
+    )
     assert quiet.notes == ()
 
 
@@ -468,10 +649,14 @@ def test_continue_with_a_role_compares_with_the_newest_session():
     other = build_launch(PROFILE, ["--agent-role", "worker", "-c"], resume_context(newest=None)[0], ROLES)
 
     assert "--system-prompt-snapshot" not in same.argv
-    assert other.notes == ("resuming the newest session here, which ran as no role, with role 'worker': --system-prompt-snapshot off sends the new system prompt, at the cost of prompt cache reuse for this run",)
+    assert other.notes == (
+        "resuming the newest session here, which ran as no role, with role 'worker': --system-prompt-snapshot off sends the new system prompt, at the cost of prompt cache reuse for this run",
+    )
 
 
-@pytest.mark.parametrize("args", [["--resume"], ["-r", "-p", "x"], ["--resume", "my session name"], ["--from-pr", "12"]])
+@pytest.mark.parametrize(
+    "args", [["--resume"], ["-r", "-p", "x"], ["--resume", "my session name"], ["--from-pr", "12"]]
+)
 def test_picker_gets_no_automatic_role_and_no_notice_but_an_explicit_role_turns_the_snapshot_off(args):
     ctx, calls = resume_context(recorded={"role": "worker"}, newest={"role": "worker"})
     profile = dataclasses.replace(PROFILE, default_role="worker")
@@ -507,7 +692,10 @@ def test_recorded_start_reads_the_newest_valid_line_from_any_project(tmp_path):
 
 def test_recorded_start_picks_the_newest_line_by_ts_across_project_dirs(tmp_path):
     for project, ts, role in (("-a", 300, "worker"), ("-b", 500, "dispatcher"), ("-c", None, "hooked")):
-        write_log(tmp_path / "projects" / project / SESSION / "auth-switch-profile-starts.jsonl", json.dumps({"v": 1, "ts": ts, "role": role}))
+        write_log(
+            tmp_path / "projects" / project / SESSION / "auth-switch-profile-starts.jsonl",
+            json.dumps({"v": 1, "ts": ts, "role": role}),
+        )
 
     assert launcher.recorded_start_of(tmp_path, SESSION, "/a")["role"] == "dispatcher"
 
@@ -558,10 +746,26 @@ def test_launcher_resume_reapplies_and_switches_the_role(role_launch, sandbox):
     reapplied = run("--resume", SESSION)
     switched = run("--agent-role", "worker", "--resume", SESSION)
 
-    assert json.loads(reapplied.stdout)["argv"] == ["--append-system-prompt-file", str(prompt), "--model", "opus", "--resume", SESSION]
+    assert json.loads(reapplied.stdout)["argv"] == [
+        "--append-system-prompt-file",
+        str(prompt),
+        "--model",
+        "opus",
+        "--resume",
+        SESSION,
+    ]
     assert reapplied.stderr == ""
     assert json.loads(switched.stdout) == {
         "argv": ["--system-prompt-snapshot", "off", "--resume", SESSION],
-        "env": {"FP_CC_AUTH_SWITCH_PROFILE": "work", "FP_CC_AUTH_SWITCH_ROLE": "worker", "FP_CC_AUTH_SWITCH_ROLE_PROMPT": None, "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": None, "ROLE_ONLY": None},
+        "env": {
+            "FP_CC_AUTH_SWITCH_PROFILE": "work",
+            "FP_CC_AUTH_SWITCH_ROLE": "worker",
+            "FP_CC_AUTH_SWITCH_ROLE_PROMPT": None,
+            "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": None,
+            "ROLE_ONLY": None,
+        },
     }
-    assert switched.stderr == f"cc-auth-switch start: resuming session {SESSION}, which ran as role 'dispatcher', with role 'worker': --system-prompt-snapshot off sends the new system prompt, at the cost of prompt cache reuse for this run\n"
+    assert (
+        switched.stderr
+        == f"cc-auth-switch start: resuming session {SESSION}, which ran as role 'dispatcher', with role 'worker': --system-prompt-snapshot off sends the new system prompt, at the cost of prompt cache reuse for this run\n"
+    )

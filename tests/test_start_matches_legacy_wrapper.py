@@ -62,13 +62,32 @@ profiles:
 
 # A user's --settings is left out: start merges it with the attribution, where the legacy wrapper dropped the attribution.
 ARGUMENTS = [
-    [], ["-p", "hello"], ["--model", "opus"], ["--model=opus", "-p", "x"],
-    ["--resume"], ["-r", "abc"], ["--name=mine"], ["-c"], ["mcp", "list"], ["--add-dir", "/x", "-p", "two words"], ["-p", "--model"], ["--", "hello"],
+    [],
+    ["-p", "hello"],
+    ["--model", "opus"],
+    ["--model=opus", "-p", "x"],
+    ["--resume"],
+    ["-r", "abc"],
+    ["--name=mine"],
+    ["-c"],
+    ["mcp", "list"],
+    ["--add-dir", "/x", "-p", "two words"],
+    ["-p", "--model"],
+    ["--", "hello"],
 ]
 
 # Inherited variables that both must drop, replace, or pass through unchanged.
-INHERITED = {"CLAUDE_CODE_ENTRYPOINT": "cli", "ANTHROPIC_API_KEY": "leak", "CLAUDE_CONFIG_DIR": "/wrong", "FP_CC_AUTH_SWITCH_PROFILE": "wrong",
-             "_": "/usr/bin/env", "OLDPWD": "/somewhere", "SHLVL": "3", "TERM": "xterm-256color", "UNRELATED_TOKEN": "a b $c `d`"}
+INHERITED = {
+    "CLAUDE_CODE_ENTRYPOINT": "cli",
+    "ANTHROPIC_API_KEY": "leak",
+    "CLAUDE_CONFIG_DIR": "/wrong",
+    "FP_CC_AUTH_SWITCH_PROFILE": "wrong",
+    "_": "/usr/bin/env",
+    "OLDPWD": "/somewhere",
+    "SHLVL": "3",
+    "TERM": "xterm-256color",
+    "UNRELATED_TOKEN": "a b $c `d`",
+}
 
 
 @pytest.fixture(scope="module")
@@ -80,8 +99,13 @@ def launchers(tmp_path_factory):
     (source_dir / "settings.json").write_text("{}\n")
     bin_dir, legacy_bin = sandbox.home / "bin", sandbox.mkdir("legacy-bin")
     profiles_dir = sandbox.home / "profiles"
-    config_path = sandbox.write("auth-switch.yaml", f"source_dir: {source_dir}\nbin_dir: {bin_dir}\nprofiles_dir: {profiles_dir}\n{PROFILES}")
-    sandbox.write("auth-switch.secrets.yaml", 'profiles:\n  vertex:\n    env:\n      OTEL_EXPORTER_OTLP_HEADERS: "dd-api-key=secret value"\n')
+    config_path = sandbox.write(
+        "auth-switch.yaml", f"source_dir: {source_dir}\nbin_dir: {bin_dir}\nprofiles_dir: {profiles_dir}\n{PROFILES}"
+    )
+    sandbox.write(
+        "auth-switch.secrets.yaml",
+        'profiles:\n  vertex:\n    env:\n      OTEL_EXPORTER_OTLP_HEADERS: "dd-api-key=secret value"\n',
+    )
     sandbox.run_install("--config", str(config_path))
 
     # The legacy installer's computation of a wrapper's inputs.
@@ -93,22 +117,40 @@ def launchers(tmp_path_factory):
         script = legacy_bin / f"claude-{name}"
         # The legacy installer expanded ~ in add_dirs with the HOME it ran under.
         with mock.patch.dict(os.environ, {"HOME": str(sandbox.home)}):
-            script.write_text(generate_wrapper_script(
-                name, profiles_dir / name, profile.get("description", ""), env, profile.get("add_dirs", []) or [],
-                profile.get("model") or None, sandbox.tool_bin / "cc-auth-switch",
-            ))
+            script.write_text(
+                generate_wrapper_script(
+                    name,
+                    profiles_dir / name,
+                    profile.get("description", ""),
+                    env,
+                    profile.get("add_dirs", []) or [],
+                    profile.get("model") or None,
+                    sandbox.tool_bin / "cc-auth-switch",
+                )
+            )
         script.chmod(0o755)
 
     fake_bin = sandbox.mkdir("fake-bin")
     for name, content in (("claude", FAKE_CLAUDE), ("tmux", FAKE_TMUX)):
         (fake_bin / name).write_text(content)
         (fake_bin / name).chmod(0o755)
-    sandbox.write(".gitconfig", '[includeIf "gitdir:~/devel/projects/company/"]\n    path = ~/devel/projects/company/.gitconfig\n')
-    sandbox.write("devel/projects/company/.gitconfig", '[claude-code "attribution"]\n    commit = "Line one\\n\\nCo-Authored-By: Claude"\n    sessionUrl = false\n')
+    sandbox.write(
+        ".gitconfig", '[includeIf "gitdir:~/devel/projects/company/"]\n    path = ~/devel/projects/company/.gitconfig\n'
+    )
+    sandbox.write(
+        "devel/projects/company/.gitconfig",
+        '[claude-code "attribution"]\n    commit = "Line one\\n\\nCo-Authored-By: Claude"\n    sessionUrl = false\n',
+    )
     places = {
-        "company repository in tmux": (sandbox.git_init("devel/projects/company/service"), {"TMUX": "/tmp/tmux-1000/default,1,0", "TMUX_PANE": "%12", "FAKE_TMUX_SESSION": "owner/repo"}),
+        "company repository in tmux": (
+            sandbox.git_init("devel/projects/company/service"),
+            {"TMUX": "/tmp/tmux-1000/default,1,0", "TMUX_PANE": "%12", "FAKE_TMUX_SESSION": "owner/repo"},
+        ),
         "personal repository": (sandbox.git_init("devel/personal/project"), {}),
-        "company directory, tmux failing": (sandbox.home / "devel/projects/company", {"TMUX": "/tmp/x,1,0", "TMUX_PANE": "%3", "FAKE_TMUX_FAIL": "1"}),
+        "company directory, tmux failing": (
+            sandbox.home / "devel/projects/company",
+            {"TMUX": "/tmp/x,1,0", "TMUX_PANE": "%3", "FAKE_TMUX_FAIL": "1"},
+        ),
     }
     env = {**sandbox.env, **INHERITED, "PATH": f"{fake_bin}{os.pathsep}{sandbox.env['PATH']}"}
     return bin_dir, legacy_bin, env, places
@@ -118,9 +160,9 @@ def legacy_in_start_order(argv: list[str], args: list[str]) -> list[str]:
     if argv == args:
         return argv
     model: list[str] = []
-    if argv[-2:-1] == ["--model"] and argv[-2 - len(args):-2] == args:
+    if argv[-2:-1] == ["--model"] and argv[-2 - len(args) : -2] == args:
         model, argv = argv[-2:], argv[:-2]
-    added, user = argv[: len(argv) - len(args)], argv[len(argv) - len(args):]
+    added, user = argv[: len(argv) - len(args)], argv[len(argv) - len(args) :]
     assert user == args
     rewritten: list[str] = []
     while added:
@@ -133,12 +175,16 @@ def legacy_in_start_order(argv: list[str], args: list[str]) -> list[str]:
 
 
 def launch(bin_dir, profile, args, cwd, env) -> dict:
-    result = subprocess.run([str(bin_dir / f"claude-{profile}"), *args], cwd=cwd, env=env, capture_output=True, text=True)
+    result = subprocess.run(
+        [str(bin_dir / f"claude-{profile}"), *args], cwd=cwd, env=env, capture_output=True, text=True
+    )
     return {"returncode": result.returncode, "stderr": result.stderr, "stdout": json.loads(result.stdout)}
 
 
 @pytest.mark.parametrize("profile", ["plain", "modeled", "vertex", "attributed"])
-@pytest.mark.parametrize("place", ["company repository in tmux", "personal repository", "company directory, tmux failing"])
+@pytest.mark.parametrize(
+    "place", ["company repository in tmux", "personal repository", "company directory, tmux failing"]
+)
 def test_start_launches_claude_like_the_legacy_wrapper(launchers, profile, place):
     bin_dir, legacy_bin, env, places = launchers
     cwd, place_env = places[place]
@@ -151,5 +197,9 @@ def test_start_launches_claude_like_the_legacy_wrapper(launchers, profile, place
         new_env.pop("_", None), legacy_env.pop("_", None)
         legacy["stdout"]["argv"] = legacy_in_start_order(legacy["stdout"]["argv"], args)
         assert launched == legacy, args
-        assert {key: (new_env.get(key), legacy_env.get(key)) for key in new_env.keys() | legacy_env.keys() if new_env.get(key) != legacy_env.get(key)} == {}, args
+        assert {
+            key: (new_env.get(key), legacy_env.get(key))
+            for key in new_env.keys() | legacy_env.keys()
+            if new_env.get(key) != legacy_env.get(key)
+        } == {}, args
         assert new_env["FP_CC_AUTH_SWITCH_PROFILE"] == profile

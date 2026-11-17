@@ -83,8 +83,9 @@ def check_secrets_git_safety(secrets_path: Path) -> None:
     git binary, there is nothing to check. Git output stays captured so no path or content leaks.
     A git that does not answer in time is fatal too, because the file cannot be shown safe without it.
     """
-    directory = str(secrets_path.parent)
-    name = str(secrets_path)
+    # git -C reads a relative path against that directory, not against the current one.
+    directory = str(secrets_path.parent.absolute())
+    name = str(secrets_path.absolute())
 
     def run(*git_args: str) -> int | None:
         try:

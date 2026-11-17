@@ -391,3 +391,17 @@ def test_start_accepts_config_with_equals_sign(installed, sandbox):
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)[-2:] == ["--model", "sonnet"]
 
+
+def test_start_reads_a_relative_config_and_its_secrets_from_the_current_directory(installed, sandbox):
+    bin_dir, env = installed
+    sandbox.git_init(".")
+    config_dir = sandbox.mkdir("config")
+    (config_dir / "auth-switch.yaml").write_text((sandbox.home / "auth-switch.yaml").read_text())
+    (config_dir / "auth-switch.secrets.yaml").write_text('profiles:\n  plain:\n    env:\n      SECRET: "value"\n')
+    # Anchored to config/, so git must be asked about the file by its real path.
+    (config_dir / ".gitignore").write_text("/auth-switch.secrets.yaml\n")
+
+    result = run_start(sandbox, {**env, "PWD": str(sandbox.home)}, sandbox.home, "--config", "config/auth-switch.yaml", "plain", "-p", "x")
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == ["-p", "x"]

@@ -217,6 +217,30 @@ def test_first_pass_keeps_a_newer_shared_copy_and_catch_up_keeps_the_mtime_rule_
     assert (shared / "4242.json").read_text() == "shared"
 
 
+
+@pytest.mark.parametrize("order", ["old first", "recreated first"])
+@pytest.mark.parametrize("late_mtime, expected", [(MTIME + 2, "late write"), (MTIME, "recreated")])
+def test_catch_up_over_two_backups_keeps_the_newest_file_in_any_order(tmp_path, order, late_mtime, expected):
+    # The fallback swap: the first pass copies the old sessions/, a session recreates sessions/ in the
+    # gap between the two renames and the installer merges it, then both end up as backups.
+    old, recreated, shared = tmp_path / "old", tmp_path / "recreated", tmp_path / "shared"
+    for directory in (old, recreated, shared):
+        directory.mkdir()
+    copied: dict = {}
+    set_file(old / "4242.json", "first", MTIME - 10)
+    sessions.copy_newer(old, shared, copied=copied)
+    set_file(recreated / "4242.json", "recreated", MTIME + 1)
+    sessions.copy_newer(recreated, shared, copied=copied)
+    set_file(old / "4242.json", "late write", late_mtime)
+
+    backups = [old, recreated] if order == "old first" else [recreated, old]
+    for _ in range(2):
+        for backup in backups:
+            sessions.copy_newer(backup, shared, copied=copied)
+
+    assert (shared / "4242.json").read_text() == expected
+
+
 def test_copies_leave_no_temp_files(old_and_shared):
     old, shared = old_and_shared
     set_file(old / "1.json", "a", MTIME)

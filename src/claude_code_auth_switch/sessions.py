@@ -91,6 +91,12 @@ class Copied:
     digest: bytes
 
 
+# What the passes of one migration or rollback wrote, by source directory (st_dev, st_ino) and file
+# name. The identity of the directory, not its path, because the old sessions/ is renamed to a backup
+# between the first pass and the catch-up passes.
+CopyRecord = dict[tuple[int, int, str], Copied]
+
+
 def read_file(path: str | Path) -> tuple[bytes, os.stat_result]:
     """Read a file and the stat that belongs to the bytes read."""
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -131,19 +137,21 @@ def write_copy(target: Path, data: bytes, source_stat: os.stat_result) -> Copied
     return Copied(len(data), source_stat.st_mtime_ns, hashlib.sha256(data).digest())
 
 
-def copy_newer(source_dir: Path, target_dir: Path, names: set[str] | None = None, copied: dict[str, Copied] | None = None) -> list[str]:
+def copy_newer(source_dir: Path, target_dir: Path, names: set[str] | None = None, copied: CopyRecord | None = None) -> list[str]:
     """Copy regular files whose copy in target_dir is missing or older, keeping the mtime.
 
     With `copied`, the caller's record of what earlier passes wrote into target_dir, one more case
-    copies: the target still holds exactly what an earlier pass wrote, and the source differs from it.
-    Nothing has written the target since, so the source holds the later state, whatever the mtimes
-    say. A session that empties and then rewrites its record within one timestamp tick otherwise
-    leaves an empty copy behind, because both writes carry the same mtime. Every file written is
-    added to `copied`.
+    copies: the target still holds exactly what an earlier pass wrote from this same source directory,
+    and the source differs from it. Nothing has written the target since, so the source holds the
+    later state of that file, whatever the mtimes say. A session that empties and then rewrites its
+    record within one timestamp tick otherwise leaves an empty copy behind, because both writes carry
+    the same mtime. A target written from another source directory is compared by mtime, so with
+    several backups the newest file wins in any order. Every file written is added to `copied`.
 
     A file that disappears while copying belongs to a session that just ended, so it is skipped.
     """
     written: list[str] = []
+    source_id = os.stat(source_dir)
     for entry in os.scandir(source_dir):
         if names is not None and entry.name not in names:
             continue
@@ -157,7 +165,7 @@ def copy_newer(source_dir: Path, target_dir: Path, names: set[str] | None = None
             except FileNotFoundError:
                 target_mtime = None
             if target_mtime is not None:
-                ours = copied.get(entry.name) if copied is not None else None
+                ours = copied.get((source_id.st_dev, source_id.st_ino, entry.name)) if copied is not None else None
                 if ours is not None and fingerprint(target) == ours:
                     if hashlib.sha256(data).digest() == ours.digest:
                         continue
@@ -165,7 +173,7 @@ def copy_newer(source_dir: Path, target_dir: Path, names: set[str] | None = None
                     continue
             record = write_copy(target, data, source_stat)
             if copied is not None:
-                copied[entry.name] = record
+                copied[(source_id.st_dev, source_id.st_ino, entry.name)] = record
             written.append(entry.name)
         except FileNotFoundError:
             continue
@@ -182,7 +190,7 @@ def backup_path(profile_dir: Path) -> Path:
     return candidate
 
 
-def put_in_place(staged: Path, live: Path, profile_dir: Path, target: Path, copied: dict[str, Copied]) -> list[Path]:
+def put_in_place(staged: Path, live: Path, profile_dir: Path, target: Path, copied: CopyRecord) -> list[Path]:
     """Replace `live` with `staged` and return where the replaced directory went.
 
     The atomic exchange leaves the old directory at `staged`, which is then renamed to a backup. The
@@ -219,7 +227,7 @@ def migrate(profile_dir: Path, target: Path, settle: float = SETTLE_SECONDS) -> 
     staged = profile_dir / SWAP_NAME
     target.mkdir(mode=0o700, parents=True, exist_ok=True)
     staged.symlink_to(target)
-    copied: dict[str, Copied] = {}
+    copied: CopyRecord = {}
     copy_newer(live, target, copied=copied)
     backups = put_in_place(staged, live, profile_dir, target, copied)
 
@@ -371,7 +379,7 @@ def find_owned(target: Path, profile_dir: Path, profile_name: str) -> Ownership:
     return owned
 
 
-def put_back(staged: Path, live: Path, copied: dict[str, Copied]) -> None:
+def put_back(staged: Path, live: Path, copied: CopyRecord) -> None:
     """Replace the `live` symlink with the real directory `staged`."""
     try:
         exchange(staged, live)
@@ -406,7 +414,7 @@ def rollback(profile_name: str, profile_dir: Path, target: Path, settle: float =
 
     owned = find_owned(target, profile_dir, profile_name)
     staged.mkdir(mode=0o700)
-    copied: dict[str, Copied] = {}
+    copied: CopyRecord = {}
     copy_newer(target, staged, owned.live, copied)
     put_back(staged, live, copied)
 

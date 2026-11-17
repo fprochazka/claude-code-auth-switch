@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 
 import pytest
@@ -56,7 +57,7 @@ def test_failure_mid_write_leaves_the_target_and_no_temp(tmp_path, monkeypatch, 
     def boom(*args, **kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(installer.os, failing, boom)
+    monkeypatch.setattr(os, failing, boom)
     with pytest.raises(OSError, match="disk full"):
         write_profile_file(target, b'{"new": true}\n', None)
 

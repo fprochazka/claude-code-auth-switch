@@ -1,4 +1,5 @@
 import dataclasses
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -83,6 +84,22 @@ def test_unreadable_user_settings_stops_the_launch(tmp_path, value, error):
     (tmp_path / "list.json").write_text("[1]")
     with pytest.raises(LaunchError, match=error):
         launcher.read_settings_value(value, str(tmp_path))
+
+
+RELATIVE_SETTINGS = '{"statusLine": {"type": "command", "command": "./status.sh"}}'
+
+
+def test_a_relative_settings_path_and_relative_paths_inside_it_stay_as_written(tmp_path):
+    (tmp_path / "own.json").write_text(RELATIVE_SETTINGS)
+    ctx = dataclasses.replace(context()[0], cwd=str(tmp_path))
+    merged_ctx = dataclasses.replace(context(attribution={"attribution": {"pr": ""}})[0], cwd=str(tmp_path))
+
+    # Nothing to merge: claude gets the relative path, as from plain claude.
+    assert build_launch(PROFILE, ["--settings", "own.json"], ctx).argv[-2:] == ["--settings", "own.json"]
+    # Something to merge: claude gets the content inline, the path inside it unchanged.
+    merged = build_launch(PROFILE, ["--settings", "own.json"], merged_ctx).argv
+    assert json.loads(merged[merged.index("--settings") + 1]) == {"attribution": {"pr": ""}, **json.loads(RELATIVE_SETTINGS)}
+    assert "own.json" not in merged
 
 
 def test_user_settings_pass_unchanged_when_start_has_no_settings_of_its_own():

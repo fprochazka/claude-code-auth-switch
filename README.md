@@ -293,6 +293,11 @@ The attribution is fixed when Claude starts. A session started in a personal rep
 
 Subcommands such as `claude-personal mcp list` do not get the setting. Claude Code keeps only the last `--settings` flag instead of merging them, so `start` passes a single `--settings` JSON. When you pass your own `--settings` to a launcher, as inline JSON or as the path of a JSON file, `start` reads it and deep-merges it last, so your keys win per key. Lists are concatenated without duplicates, as Claude Code merges its own settings sources. When you pass several, `start` uses the last one, as Claude Code would. A file that cannot be read or is not a JSON object stops the launch with the path and the error. When `start` has no settings of its own for the launch, it passes your `--settings` unchanged and does not read it.
 
+The two cases behave differently in Claude Code. Which one applies depends on whether the start directory has a git config attribution and whether the role has `settings`:
+
+- **Nothing to merge:** Claude Code gets your file path, as with plain `claude`. A relative path to the file resolves against the start directory, and Claude Code can see later changes to the file.
+- **Something to merge:** Claude Code gets inline JSON with your file's content, not the file. It cannot see later changes to the file. `start` copies the values as they are, so a relative path inside the file, such as a `statusLine` command `./status.sh`, no longer resolves the way it would for the file. Write absolute paths in a settings file that you pass to a launcher.
+
 If git cannot read the config, or a git call does not answer within 5 seconds, the launcher prints a one-line warning and starts Claude without the git config attribution.
 
 ### Plugins

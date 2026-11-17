@@ -473,7 +473,9 @@ fi
 - [Gemini: Symlink Behavior Research](docs/Gemini-Symlink-Behavior-Research.md) — Gemini Deep Research report on Claude Code's file I/O and symlink handling
 - [Gemini: Managing Multiple Claude Accounts](docs/Gemini-Managing-Multiple-Claude-Accounts.md) — Gemini Deep Research report on multi-tenant Claude Code architecture
 
-## Development
+## Developing
+
+The tool is a Python package in `src/claude_code_auth_switch/`, built with hatchling. [uv](https://docs.astral.sh/uv/) manages the environment, and `uv.lock` pins the dependencies. The repository has no CI and no linter config, so the tests that you run locally are the only check before a change reaches users.
 
 ### Commit hooks
 
@@ -488,13 +490,45 @@ The file holds one extended regex per line, matched case-insensitively. Blank li
 
 ### Tests
 
-The tests use real git with a throwaway home directory and never touch your own config. Run them with [uv](https://docs.astral.sh/uv/):
+The tests use real git with a throwaway home directory and never touch your own config. Run them with uv:
 
 ```bash
 uv run pytest
 ```
 
-`uv run` installs the package into the project environment, so the tests find its commands on `PATH`. To try a local checkout as the installed tool, run `uv tool install --force --editable .`.
+`uv run` installs the package into the project environment, so the tests find `cc-auth-switch` on `PATH`.
+
+The package supports Python 3.10 and newer. uv runs the tests on the newest Python it finds, and Python 3.14 evaluates annotations lazily, so code that fails to import on an older Python can still pass there. Run the tests on the oldest supported version too:
+
+```bash
+uv run --isolated --python 3.10 pytest
+```
+
+### Trying a change locally
+
+To run a checkout as the installed tool, install it as an editable uv tool:
+
+```bash
+uv tool install --force --editable .
+```
+
+An editable install runs whatever the checkout holds at the moment, with no reinstall. Every wrapper and every Claude Code session that you start through one uses it at once, also while the checkout is on a half-finished branch. Make changes in a separate git worktree when your own sessions run from the installed checkout.
+
+To see what `cc-auth-switch install` writes without touching your profiles, run it with `--config` pointing at a temporary `auth-switch.yaml` whose `bin_dir` and `profiles_dir` are temporary directories. Leave `share_sessions` off in that config, because it links `sessions/` to `~/.claude/sessions`.
+
+## Releasing
+
+The tool has no releases: no version bumps, no tags, no PyPI package and no GitHub releases. The version in `pyproject.toml` stays at `0.1.0`. A change reaches users when it lands on `master`:
+
+1. Run the tests on the default Python and on Python 3.10, see [Tests](#tests).
+2. Push the commit to `master`. Nothing runs after the push, because the repository has no CI.
+
+Users then update in two steps:
+
+1. Update the tool. An install from GitHub updates with `uv tool upgrade claude-code-auth-switch`, or with `uv tool install --reinstall git+https://github.com/fprochazka/claude-code-auth-switch.git`. An editable install updates when you pull its checkout. For an editable install, `uv tool upgrade` only refreshes the dependencies.
+2. Run `cc-auth-switch install`. It regenerates the wrappers and patches each profile's `settings.json`, so they match the new code. The wrappers and the `SessionStart` hook call `cc-auth-switch` at every launch, so a change to `attribution` or `session-start` takes effect without this step. A change to what `install` writes does not.
+
+Check the output of `cc-auth-switch install`: it lists what changed under each profile and the path of every backup it made, see [Re-syncing after config changes](#re-syncing-after-config-changes).
 
 ## License
 

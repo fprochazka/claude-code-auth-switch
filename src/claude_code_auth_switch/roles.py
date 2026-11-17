@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -203,7 +204,7 @@ def extra_arg_problem(item: str) -> str | None:
     return f"is not an option without a value in Claude Code {CLAUDE_VERSION}; write an option that takes a value as --flag=value"
 
 
-def resolve_prompt(prompt: object, error) -> RolePrompt | None:
+def resolve_prompt(prompt: object, error: Callable[[str], ConfigError]) -> RolePrompt | None:
     if prompt is None:
         return None
     if not isinstance(prompt, dict):

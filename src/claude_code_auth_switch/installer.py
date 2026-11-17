@@ -21,6 +21,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from types import TracebackType
 from typing import Any
 
 from claude_code_auth_switch import launcher, sessions
@@ -682,8 +683,10 @@ class SectionOutput(contextlib.AbstractContextManager["SectionOutput"]):
         self._redirect.__enter__()
         return self
 
-    def __exit__(self, *exc_info) -> None:
-        self._redirect.__exit__(*exc_info)
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        self._redirect.__exit__(exc_type, exc, traceback)
 
 
 def install(config_arg: Path | None, sync: bool, force: bool) -> None:

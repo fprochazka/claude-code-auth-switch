@@ -78,6 +78,7 @@ def test_every_key_of_the_plan_example_resolves():
         ("/role dir",),
         True,
     )
+    assert role.agents is not None
     assert json.loads(role.agents) == FULL_ROLE["agents"]
     assert role.env == {"ROLE_ONLY": "1", "SHARED": "role", "NUMBER": "3"}
 
@@ -689,7 +690,8 @@ def test_recorded_start_reads_the_newest_valid_line_from_any_project(tmp_path):
     log = tmp_path / "projects/-elsewhere" / SESSION / "auth-switch-profile-starts.jsonl"
     write_log(log, json.dumps({"v": 1, "role": "worker"}), json.dumps({"v": 1, "role": "dispatcher"}), "{broken")
 
-    assert launcher.recorded_start_of(tmp_path, SESSION, "/work")["role"] == "dispatcher"
+    start = launcher.recorded_start_of(tmp_path, SESSION, "/work")
+    assert start is not None and start["role"] == "dispatcher"
     assert launcher.recorded_start_of(tmp_path, "1b6f2c1e-1111-4222-8333-444455556666", "/work") is None
 
 
@@ -700,7 +702,8 @@ def test_recorded_start_picks_the_newest_line_by_ts_across_project_dirs(tmp_path
             json.dumps({"v": 1, "ts": ts, "role": role}),
         )
 
-    assert launcher.recorded_start_of(tmp_path, SESSION, "/a")["role"] == "dispatcher"
+    start = launcher.recorded_start_of(tmp_path, SESSION, "/a")
+    assert start is not None and start["role"] == "dispatcher"
 
 
 @pytest.mark.parametrize("ts", [None, 500])
@@ -710,8 +713,10 @@ def test_without_a_newer_ts_the_start_directorys_project_wins_then_the_newest_lo
         write_log(log, json.dumps({"v": 1, "ts": ts, "role": project}))
         os.utime(log, (mtime, mtime))
 
-    assert launcher.recorded_start_of(tmp_path, SESSION, "/a")["role"] == "-a"
-    assert launcher.recorded_start_of(tmp_path, SESSION, "/elsewhere")["role"] == "-b"
+    start = launcher.recorded_start_of(tmp_path, SESSION, "/a")
+    assert start is not None and start["role"] == "-a"
+    start = launcher.recorded_start_of(tmp_path, SESSION, "/elsewhere")
+    assert start is not None and start["role"] == "-b"
 
 
 def test_newest_start_follows_claudes_project_dir_naming(tmp_path):
@@ -726,7 +731,8 @@ def test_newest_start_follows_claudes_project_dir_naming(tmp_path):
 
     assert launcher.newest_start_in(tmp_path, cwd) == {}
     write_log(project / new / "auth-switch-profile-starts.jsonl", json.dumps({"role": "dispatcher"}))
-    assert launcher.newest_start_in(tmp_path, cwd)["role"] == "dispatcher"
+    start = launcher.newest_start_in(tmp_path, cwd)
+    assert start is not None and start["role"] == "dispatcher"
     assert launcher.newest_start_in(tmp_path, "/nowhere") is None
 
 

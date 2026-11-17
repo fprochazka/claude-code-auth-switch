@@ -35,6 +35,7 @@ def test_changed_content_is_backed_up_and_replaced_keeping_the_mode(tmp_path):
 
     assert target.read_bytes() == b'{"new": true}\n'
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert backup.directory is not None
     assert (backup.directory / ".claude.json").read_bytes() == b'{"old": true}\n'
     assert leftovers(tmp_path) == []
 

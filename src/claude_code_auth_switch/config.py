@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import yaml
 
@@ -151,7 +151,7 @@ def load_secrets(secrets_path: Path, config: dict[str, Any]) -> dict[str, dict[s
     if data is None:
         return {}
 
-    def fatal(message: str) -> None:
+    def fatal(message: str) -> NoReturn:
         print(f"Error: {secrets_path}: {message}", file=sys.stderr)
         sys.exit(1)
 

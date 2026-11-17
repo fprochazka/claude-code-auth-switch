@@ -21,7 +21,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from claude_code_auth_switch.claude_options import has_option, remove_option, scan
 from claude_code_auth_switch.config import ENV_NAME, ConfigError
@@ -327,13 +327,15 @@ def build_launch(
     snapshot_args: list[str] = []
     resumed = resume_target(args)
     if resumed is not None and resumed[0] == "session-id":
-        known = context.recorded_start(profile.config_dir, resumed[1], context.cwd) is not None
+        # "session-id" always carries the id, see resume_target.
+        known = context.recorded_start(profile.config_dir, cast(str, resumed[1]), context.cwd) is not None
         resumed = ("id", resumed[1]) if known else None
     if resumed is not None:
         kind, session_id = resumed
         recorded: dict[str, Any] | None = None
         if kind == "id":
-            recorded = context.recorded_start(profile.config_dir, session_id, context.cwd) or {}
+            # "id" always carries the id, see resume_target.
+            recorded = context.recorded_start(profile.config_dir, cast(str, session_id), context.cwd) or {}
         elif kind == "continue":
             recorded = context.newest_start(profile.config_dir, context.cwd)
             recorded = recorded if recorded is not None else {}

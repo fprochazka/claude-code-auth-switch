@@ -34,7 +34,8 @@ def plugin_setup(sandbox):
         )
 
     def settings(profile: str) -> dict[str, Any]:
-        return json.loads((profiles / profile / "settings.json").read_text())
+        data: dict[str, Any] = json.loads((profiles / profile / "settings.json").read_text())
+        return data
 
     return write_source, write_config, settings, profiles
 

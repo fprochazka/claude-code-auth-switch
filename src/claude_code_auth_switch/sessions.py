@@ -353,7 +353,7 @@ def owner_from_log(pid: int, target: Path, profile_dir: Path, profile_name: str)
     if latest.get("config_dir"):
         return same_path(latest["config_dir"], profile_dir)
     if latest.get("profile"):
-        return latest["profile"] == profile_name
+        return bool(latest["profile"] == profile_name)
     return None
 
 

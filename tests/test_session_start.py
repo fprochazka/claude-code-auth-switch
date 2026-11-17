@@ -165,7 +165,8 @@ def our_group(sandbox) -> dict[str, Any]:
 
 
 def settings(sandbox, profile: str) -> dict[str, Any]:
-    return json.loads((sandbox.home / "profiles" / profile / "settings.json").read_text())
+    data: dict[str, Any] = json.loads((sandbox.home / "profiles" / profile / "settings.json").read_text())
+    return data
 
 
 def test_install_registers_the_hook_and_keeps_foreign_hooks(sandbox, install_config):

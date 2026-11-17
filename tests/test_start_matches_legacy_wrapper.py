@@ -17,6 +17,7 @@ from unittest import mock
 import pytest
 
 from claude_code_auth_switch.config import load_config, load_secrets, merge_secret_env, pinned_models_to_env
+
 from legacy_wrapper import generate_wrapper_script
 
 FAKE_CLAUDE = """\

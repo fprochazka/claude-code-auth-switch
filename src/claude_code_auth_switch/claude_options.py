@@ -21,8 +21,8 @@ An option that is not in the table, a hidden one included, is read as taking no 
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 CLAUDE_VERSION = "2.1.325"
 

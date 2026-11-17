@@ -16,6 +16,7 @@ from claude_code_auth_switch.launcher import (
     merge_settings,
     parse_args,
 )
+
 from legacy_wrapper import generate_wrapper_script
 
 PROFILE = Profile(

@@ -254,8 +254,10 @@ def test_user_flags_win_over_the_role_and_list_flags_concatenate():
 
     assert "opus" not in argv and "sonnet" not in argv and "high" not in argv
     assert argv.count("--effort") == 0 and argv.count("--agents") == 1
-    assert ["--allowed-tools=Bash(git:*)", "--allowed-tools", "Edit"] == [
-        arg for arg in argv if arg.startswith("--allowed-tools") or arg == "Edit"
+    assert [arg for arg in argv if arg.startswith("--allowed-tools") or arg == "Edit"] == [
+        "--allowed-tools=Bash(git:*)",
+        "--allowed-tools",
+        "Edit",
     ]
     assert argv[-9:] == args[1:]
 

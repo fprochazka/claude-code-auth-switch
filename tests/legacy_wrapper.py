@@ -51,7 +51,7 @@ def generate_wrapper_script(
     )
     lines.extend(
         [
-            f'case "${{1:-}}" in',
+            'case "${1:-}" in',
             f'  {subcommands}) exec claude "$@" ;;',
             "esac",
             "",
@@ -63,7 +63,7 @@ def generate_wrapper_script(
     if model:
         lines.extend(
             [
-                f"# Default model (overridden if --model is passed on command line)",
+                "# Default model (overridden if --model is passed on command line)",
                 'user_args=("$@")',
                 "has_model=false",
                 'for arg in "$@"; do',
@@ -71,7 +71,7 @@ def generate_wrapper_script(
                 "    --model|--model=*) has_model=true; break ;;",
                 "  esac",
                 "done",
-                f'if [[ "$has_model" == false ]]; then',
+                'if [[ "$has_model" == false ]]; then',
                 f'  user_args+=(--model "{model}")',
                 "fi",
                 "",

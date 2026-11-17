@@ -9,17 +9,17 @@ from __future__ import annotations
 
 import contextlib
 import copy
-from dataclasses import dataclass
-from datetime import datetime, timezone
-import json
-import os
 import difflib
 import hashlib
+import json
+import os
 import shlex
 import shutil
 import stat
-import tempfile
 import sys
+import tempfile
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from claude_code_auth_switch import launcher, sessions
@@ -670,7 +670,7 @@ class SectionOutput(contextlib.AbstractContextManager):
     def flush(self) -> None:
         self._target.flush()
 
-    def __enter__(self) -> "SectionOutput":
+    def __enter__(self) -> SectionOutput:
         self._target = sys.stdout
         self._redirect.__enter__()
         return self

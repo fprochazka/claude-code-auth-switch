@@ -18,9 +18,9 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
 
 from claude_code_auth_switch.claude_options import has_option, remove_option, scan
 from claude_code_auth_switch.config import ENV_NAME, ConfigError
@@ -208,12 +208,11 @@ def take_agent_role(args: Sequence[str], roles: Mapping[str, Role]) -> tuple[str
         else:
             break
     rest = list(args[index:])
-    if not (rest and rest[0] in SUBCOMMANDS):
-        # claude would reject it as an unknown option; as the value of another option it is not one.
-        if any(option.name == AGENT_ROLE_FLAG for option in scan(rest)):
-            raise LaunchError(
-                f"{AGENT_ROLE_FLAG} must come before the arguments for claude, right after the profile: claude-<profile> {AGENT_ROLE_FLAG} <name> [claude arguments...]"
-            )
+    # claude would reject it as an unknown option; as the value of another option it is not one.
+    if not (rest and rest[0] in SUBCOMMANDS) and any(option.name == AGENT_ROLE_FLAG for option in scan(rest)):
+        raise LaunchError(
+            f"{AGENT_ROLE_FLAG} must come before the arguments for claude, right after the profile: claude-<profile> {AGENT_ROLE_FLAG} <name> [claude arguments...]"
+        )
     if requested is None:
         return None, rest
     if not requested:
@@ -418,9 +417,8 @@ def build_launch(
 
     name_args: list[str] = []
     tmux, pane = context.environ.get("TMUX", ""), context.environ.get("TMUX_PANE", "")
-    if tmux and pane and not has_option(args, *NAME_SKIP_OPTIONS):
-        if tmux_session := context.tmux_session(pane):
-            name_args = ["--name", f"{tmux_session}-p{pane.removeprefix('%')}"]
+    if tmux and pane and not has_option(args, *NAME_SKIP_OPTIONS) and (tmux_session := context.tmux_session(pane)):
+        name_args = ["--name", f"{tmux_session}-p{pane.removeprefix('%')}"]
 
     # Everything start adds goes before the user's arguments, which may end in a prompt or a `--`. The
     # list options use the --flag=value form, which takes one value: `--add-dir dir` would also take

@@ -124,7 +124,7 @@ def check_secrets_git_safety(secrets_path: Path) -> None:
         return
     if tracked == 0:
         print(f"Error: Secrets file {secrets_path} is tracked in git.", file=sys.stderr)
-        print(f"Remove it from the index and ignore it:", file=sys.stderr)
+        print("Remove it from the index and ignore it:", file=sys.stderr)
         print(f"  git -C {directory} rm --cached {secrets_path.name}", file=sys.stderr)
         print(f"  echo '{secrets_path.name}' >> {secrets_path.parent / '.gitignore'}", file=sys.stderr)
         sys.exit(1)
@@ -135,7 +135,7 @@ def check_secrets_git_safety(secrets_path: Path) -> None:
     if ignored in (0, 128, None):
         return
     print(f"Error: Secrets file {secrets_path} is inside a git repository but is not ignored.", file=sys.stderr)
-    print(f"Add it to .gitignore before running the installer:", file=sys.stderr)
+    print("Add it to .gitignore before running the installer:", file=sys.stderr)
     print(f"  echo '{secrets_path.name}' >> {secrets_path.parent / '.gitignore'}", file=sys.stderr)
     sys.exit(1)
 

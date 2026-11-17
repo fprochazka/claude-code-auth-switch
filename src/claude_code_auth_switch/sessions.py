@@ -14,6 +14,7 @@ the backup would share inodes with the live records, and a stale file could over
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import ctypes.util
 import errno
@@ -448,8 +449,6 @@ def rollback(profile_name: str, profile_dir: Path, target: Path, settle: float =
     time.sleep(settle)
     copy_newer(target, live, owned.live, copied)
     for name in sorted(owned.live | owned.dead):
-        try:
+        with contextlib.suppress(FileNotFoundError):
             (target / name).unlink()
-        except FileNotFoundError:
-            pass
     return owned

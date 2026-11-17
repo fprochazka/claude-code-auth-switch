@@ -21,6 +21,12 @@ PROMPT_MODES = ("append", "replace", "none")
 
 STRING_KEYS = ("description", "model", "effort", "permission_mode")
 LIST_KEYS = ("tools", "allowed_tools", "disallowed_tools", "add_dirs", "plugin_dirs", "mcp_config", "extra_args")
+# A role's env may not set these. A launch from inside the role's session clears the role's variables,
+# and without these that launch, or the shell it runs in, would break.
+RESERVED_ENV_NAMES = frozenset({
+    "CLAUDE_CONFIG_DIR", "PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "OLDPWD", "SHLVL", "LANG", "TERM", "DISPLAY", "WAYLAND_DISPLAY",
+})
+RESERVED_ENV_PREFIXES = ("FP_CC_AUTH_SWITCH_", "LC_", "TMUX", "XDG_", "SSH_", "LD_")
 KNOWN_KEYS = frozenset((*STRING_KEYS, *LIST_KEYS, "prompt", "autocompact", "settings", "strict_mcp_config", "agents", "env"))
 
 
@@ -133,8 +139,8 @@ def resolve_role(name: str, role_config: object) -> Role:
     for key, value in env.items():
         if not isinstance(key, str) or not ENV_NAME.fullmatch(key):
             raise error(f"env variable name {key!r} is not a valid shell variable name (letters, digits and _, not starting with a digit)")
-        if key == "CLAUDE_CONFIG_DIR" or key.startswith("FP_CC_AUTH_SWITCH_"):
-            raise error(f"env variable '{key}' is reserved: the profile selects the config dir, and start sets the FP_CC_AUTH_SWITCH_* variables")
+        if key in RESERVED_ENV_NAMES or key.startswith(RESERVED_ENV_PREFIXES):
+            raise error(f"env variable '{key}' is reserved: the profile selects the config dir, start sets the FP_CC_AUTH_SWITCH_* variables, and a launch from inside the role's session clears the role's env, which must not break that launch")
         if isinstance(value, bool) or not isinstance(value, (str, int, float)):
             raise error(f"env variable '{key}' must have a string or number value")
         if "\0" in str(value):

@@ -11,6 +11,7 @@ It runs no processes and reads no files itself, so tests can call it directly.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -49,9 +50,12 @@ CLEARED_ENV_PREFIXES = ("CLAUDE_", "ANTHROPIC_")
 ROLE_ENV = "FP_CC_AUTH_SWITCH_ROLE"
 ROLE_PROMPT_ENV = "FP_CC_AUTH_SWITCH_ROLE_PROMPT"
 ROLE_PROMPT_MODE_ENV = "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE"
-# The names of the variables that the role's env: set, comma-separated. The next launch from inside
-# the session clears them, so a worker started from a dispatcher's Bash does not inherit its role's env.
+# NAME=<hash of the value> for each variable that the role's env: set, comma-separated. The next launch
+# from inside the session clears a listed variable while it still holds the role's value, so a worker
+# started from a dispatcher's Bash does not inherit its role's env, and a value the user set since stays.
+# The hash keeps a secret in a role's env out of every child process's environment.
 ROLE_ENV_KEYS_ENV = "FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS"
+ROLE_ENV_HASH_LENGTH = 16
 ROLE_ENV_VARS = (ROLE_ENV, ROLE_PROMPT_ENV, ROLE_PROMPT_MODE_ENV, ROLE_ENV_KEYS_ENV)
 
 # Set to 1 to get the traceback of an unexpected error in `start` instead of a one-line message.
@@ -246,6 +250,10 @@ def resume_target(args: Sequence[str]) -> tuple[str, str | None] | None:
     return resumed
 
 
+def env_value_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8", "surrogateescape")).hexdigest()[:ROLE_ENV_HASH_LENGTH]
+
+
 def role_label(role_name: str | None) -> str:
     return f"role '{role_name}'" if role_name else "no role"
 
@@ -254,10 +262,10 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
     roles = roles or {}
     requested_role, args = take_agent_role(user_args, roles)
 
-    inherited_role_keys = set(context.environ.get(ROLE_ENV_KEYS_ENV, "").split(","))
+    inherited_role_env = dict(entry.partition("=")[::2] for entry in context.environ.get(ROLE_ENV_KEYS_ENV, "").split(",") if "=" in entry)
     env = {
         key: value for key, value in context.environ.items()
-        if not key.startswith(CLEARED_ENV_PREFIXES) and key not in ROLE_ENV_VARS and key not in inherited_role_keys
+        if not key.startswith(CLEARED_ENV_PREFIXES) and key not in ROLE_ENV_VARS and inherited_role_env.get(key) != env_value_hash(value)
     }
     env["CLAUDE_CONFIG_DIR"] = str(profile.config_dir)
     env["FP_CC_AUTH_SWITCH_PROFILE"] = profile.name
@@ -308,7 +316,7 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
     if role is not None:
         env.update(role.env)
         if role.env:
-            env[ROLE_ENV_KEYS_ENV] = ",".join(sorted(role.env))
+            env[ROLE_ENV_KEYS_ENV] = ",".join(f"{key}={env_value_hash(value)}" for key, value in sorted(role.env.items()))
         env[ROLE_ENV] = role.name
         if role.prompt is not None:
             if not context.is_file(role.prompt.file):

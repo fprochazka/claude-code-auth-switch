@@ -1,4 +1,5 @@
 import dataclasses
+import hashlib
 import json
 import os
 import subprocess
@@ -114,6 +115,10 @@ def test_prompt_mode_defaults_to_append_and_expands_home(monkeypatch):
     ({"env": {"A": "x\0"}}, "role 'r': env value of 'A' contains a NUL character"),
     ({"env": {"CLAUDE_CONFIG_DIR": "/x"}}, "role 'r': env variable 'CLAUDE_CONFIG_DIR' is reserved"),
     ({"env": {"FP_CC_AUTH_SWITCH_PROFILE": "x"}}, "role 'r': env variable 'FP_CC_AUTH_SWITCH_PROFILE' is reserved"),
+    *[({"env": {key: "x"}}, f"role 'r': env variable '{key}' is reserved") for key in (
+        "PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "OLDPWD", "SHLVL", "LANG", "TERM", "DISPLAY", "WAYLAND_DISPLAY",
+        "LC_ALL", "TMUX", "TMUX_PANE", "XDG_RUNTIME_DIR", "SSH_AUTH_SOCK", "LD_PRELOAD",
+    )],
 ])
 def test_invalid_role_names_the_role_and_the_key(role_config, message):
     with pytest.raises(ConfigError, match=message.replace("(", r"\(")):
@@ -196,14 +201,28 @@ def test_a_users_own_prompt_flag_wins_and_the_hooks_get_mode_none():
     assert "replaces the prompt of role 'worker'" in launch.notes[0]
 
 
-def test_role_env_keys_are_exported_and_cleared_on_the_next_launch():
+def test_role_env_keys_are_exported_with_value_hashes_and_cleared_on_the_next_launch():
     dispatcher = build_launch(PROFILE, ["--agent-role", "dispatcher"], context({"PATH": "/bin"}), ROLES).env
-    assert dispatcher["FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS"] == "NUMBER,ROLE_ONLY,SHARED"
+    assert dispatcher["FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS"] == ",".join(f"{key}={hashlib.sha256(value.encode()).hexdigest()[:16]}" for key, value in (("NUMBER", "3"), ("ROLE_ONLY", "1"), ("SHARED", "role")))
 
     # A launch from the dispatcher's Bash: its role's env is gone, the profile's own SHARED wins anyway.
     for args in ([], ["--agent-role", "worker"], ["mcp", "list"]):
         nested = build_launch(PROFILE, args, context(dispatcher), ROLES).env
         assert ("ROLE_ONLY" in nested, "NUMBER" in nested, nested["SHARED"], "FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS" in nested, nested["PATH"]) == (False, False, "profile", False, "/bin"), args
+
+
+def test_a_value_set_after_the_role_survives_the_next_launch():
+    dispatcher = build_launch(PROFILE, ["--agent-role", "dispatcher"], context({"PATH": "/bin"}), ROLES).env
+
+    nested = build_launch(PROFILE, [], context({**dispatcher, "ROLE_ONLY": "mine"}), ROLES).env
+
+    assert (nested["ROLE_ONLY"], "NUMBER" in nested) == ("mine", False)
+
+
+def test_a_malformed_inherited_key_list_clears_nothing():
+    env = build_launch(PROFILE, [], context({"FOO": "1", "FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS": "FOO,,=x,BAR=1"}), ROLES).env
+
+    assert env["FOO"] == "1" and "FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS" not in env
 
 
 def test_inherited_role_variables_are_cleared_without_a_role():

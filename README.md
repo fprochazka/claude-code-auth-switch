@@ -224,7 +224,7 @@ No role string that reaches the `claude` command line or the environment may con
 
 The system prompt flags are used instead of a hook by default because Claude Code moves a hook's `additionalContext` above 10,000 characters into a file and keeps only a short preview in context. The system prompt has no such limit, and it survives compaction. If you pass the matching system prompt flag yourself, yours wins: `start` drops the role's flag, sets the prompt mode to `none` so that a hook can inject the role's text, and prints a note.
 
-`start` clears the role variables that it inherits, then sets them for the role it applies, see [Environment variables](#environment-variables). The role's `env` is merged over the profile's. `start` lists the names it set in `FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS`, and a launch from inside that session clears them first, so a worker started from a dispatcher's Bash does not inherit the dispatcher role's env. A role cannot set `CLAUDE_CONFIG_DIR` or an `FP_CC_AUTH_SWITCH_*` variable.
+`start` clears the role variables that it inherits, then sets them for the role it applies, see [Environment variables](#environment-variables). The role's `env` is merged over the profile's. `start` lists the names it set in `FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS`, each with a hash of its value, and a launch from inside that session clears a listed variable while it still holds the role's value. A worker started from a dispatcher's Bash therefore does not inherit the dispatcher role's env, and a value that you set yourself since, as in `FOO=mine claude-personal`, stays. The list carries hashes, not values, because every process started from the session inherits it, a tmux server included. A role cannot set the variables that the profile or `start` own, or that a launch from inside the session needs: `CLAUDE_CONFIG_DIR`, `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `PWD`, `OLDPWD`, `SHLVL`, `LANG`, `TERM`, `DISPLAY`, `WAYLAND_DISPLAY`, and every name that starts with `FP_CC_AUTH_SWITCH_`, `LC_`, `TMUX`, `XDG_`, `SSH_` or `LD_`.
 
 #### Resuming a session with a role
 
@@ -416,7 +416,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | `roles.<name>.mcp_config` | `[]` | `--mcp-config`, each a JSON file path or inline JSON |
 | `roles.<name>.strict_mcp_config` | `false` | `--strict-mcp-config` |
 | `roles.<name>.agents` | | `--agents`: a mapping of agents, a JSON string, or the path of a JSON file |
-| `roles.<name>.env` | `{}` | Environment variables, merged over the profile's `env`. Names and values follow the rules of `profiles.<name>.env`. `CLAUDE_CONFIG_DIR` and `FP_CC_AUTH_SWITCH_*` are refused. |
+| `roles.<name>.env` | `{}` | Environment variables, merged over the profile's `env`. Names and values follow the rules of `profiles.<name>.env`. Reserved names are refused, see [Roles](#roles). |
 | `roles.<name>.extra_args` | `[]` | More `claude` options, passed as written after the role's other flags. Each item is an option without a value or `--flag=value`. |
 
 ### `auth-switch.secrets.yaml`
@@ -443,7 +443,7 @@ The `claude-<name>` launchers run this command with the `--config` path that `in
 
 1. Reads the config and the secrets file, and resolves the profile's `env`, `pinned_models`, `model`, `add_dirs` and `default_role`, and the `roles:` section.
 2. Removes `--agent-role` from the start of the arguments.
-3. Drops every inherited `CLAUDE_*` and `ANTHROPIC_*` variable, the `FP_CC_AUTH_SWITCH_ROLE*` variables, and the variables that `FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS` names, so a launch from inside another Claude Code session does not inherit its account or its role. Then it sets `CLAUDE_CONFIG_DIR`, `FP_CC_AUTH_SWITCH_PROFILE` and the profile's `env`.
+3. Drops every inherited `CLAUDE_*` and `ANTHROPIC_*` variable, the `FP_CC_AUTH_SWITCH_ROLE*` variables, and every variable that `FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS` names while it still holds the role's value, so a launch from inside another Claude Code session does not inherit its account or its role. Then it sets `CLAUDE_CONFIG_DIR`, `FP_CC_AUTH_SWITCH_PROFILE` and the profile's `env`.
 4. Passes the arguments through when the first one is a Claude Code subcommand such as `mcp`, `auth` or `plugin`, because subcommands reject the session options. It does the same when the option `-v`, `--version`, `-h` or `--help` comes before any `--`, because `claude` then prints and exits without a session. The value of another option, as in `--name -v`, does not count.
 5. Otherwise puts its own arguments before yours, and picks the [role](#roles), also the role a [resumed session](#resuming-a-session-with-a-role) ran as, sets its `env` and the role variables, and adds `--add-dir=<dir>` for each `add_dirs` entry of the profile and the role, `--settings` with the [attribution from git config](#attribution-from-git-config), the role's `settings` and your own `--settings` merged into it, the [tmux session name](#session-names-in-tmux), the role's flags, `--system-prompt-snapshot off` when a resume switches the role, and `--model`. It adds the name, the model and the role's single-value flags only when you did not pass the same option yourself.
 6. Prints its notes to stderr, and replaces itself with `claude`.
@@ -563,7 +563,7 @@ Not supported. The launchers are bash scripts.
 | `FP_CC_AUTH_SWITCH_PROFILE` | `personal` | The active profile name — useful in [status line scripts](https://docs.anthropic.com/en/docs/claude-code/settings#status-bar) and hooks |
 | `FP_CC_AUTH_SWITCH_ROLE` | `dispatcher` | The [role](#roles) of this start. Unset when no role applies. |
 | `FP_CC_AUTH_SWITCH_ROLE_PROMPT` | `/home/you/roles/dispatcher.md` | The absolute path of the role's `prompt.file`. Unset when the role has no prompt. |
-| `FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS` | `DISPATCH_LEVEL,TEAM` | The names of the variables that the role's `env` set, comma-separated. The next launch from inside the session drops them. Unset when the role sets none. |
+| `FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS` | `DISPATCH_LEVEL=6b86b273ff34fce1,TEAM=…` | Each variable that the role's `env` set, as `NAME=<first 16 hex characters of the SHA-256 of the value>`, comma-separated. The next launch from inside the session drops a listed variable while its value still matches. Unset when the role sets none. |
 | `FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE` | `append` | `append` or `replace`: the prompt is already in the system prompt. `none`: a hook should inject it. Unset when the role has no prompt. |
 
 The `FP_CC_AUTH_SWITCH_PROFILE` variable is intentionally outside the `CLAUDE_*`/`ANTHROPIC_*` namespace so a nested launch does not drop it together with the inherited `CLAUDE_*`/`ANTHROPIC_*` variables. You can use it in your `statusLine` command to display which profile is active:

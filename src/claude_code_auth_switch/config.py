@@ -16,6 +16,9 @@ DEFAULT_SOURCE_DIR = Path("~/.claude").expanduser()
 DEFAULT_BIN_DIR = Path("~/.local/bin").expanduser()
 DEFAULT_PROFILES_DIR = Path("~/.claude-profiles").expanduser()
 
+# The secrets check runs on every launch, so a git that hangs must not hang the launch with it.
+GIT_TIMEOUT_SECONDS = 5
+
 # Model classes whose alias (sonnet/opus/haiku/fable) can be pinned to a specific
 # version id via the corresponding ANTHROPIC_DEFAULT_<CLASS>_MODEL env var.
 VALID_MODEL_CLASSES = ("sonnet", "opus", "haiku", "fable")
@@ -72,6 +75,7 @@ def check_secrets_git_safety(secrets_path: Path) -> None:
 
     Tracked file -> fatal. Inside a repo but not ignored -> fatal. Outside a repo, or without a
     git binary, there is nothing to check. Git output stays captured so no path or content leaks.
+    A git that does not answer in time is fatal too, because the file cannot be shown safe without it.
     """
     directory = str(secrets_path.parent)
     name = str(secrets_path)
@@ -81,9 +85,14 @@ def check_secrets_git_safety(secrets_path: Path) -> None:
             return subprocess.run(
                 ["git", "-C", directory, *git_args],
                 capture_output=True,
+                timeout=GIT_TIMEOUT_SECONDS,
             ).returncode
         except FileNotFoundError:
             return None
+        except subprocess.TimeoutExpired:
+            print(f"Error: git did not answer within {GIT_TIMEOUT_SECONDS} seconds while checking whether secrets file {secrets_path} is tracked or ignored.", file=sys.stderr)
+            print(f"Without that check the file cannot be shown safe. Run `git -C {directory} status` to see why git hangs.", file=sys.stderr)
+            sys.exit(1)
 
     tracked = run("ls-files", "--error-unmatch", name)
     if tracked is None:

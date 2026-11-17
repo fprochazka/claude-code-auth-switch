@@ -40,8 +40,15 @@ def warn(message: str) -> None:
     print(f"{PROG}: {message}", file=sys.stderr)
 
 
+# Every launch reads the attribution, so a git that hangs costs the attribution, never the launch.
+GIT_TIMEOUT_SECONDS = 5
+
+
 def git(args: list[str], cwd: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", cwd, *args], capture_output=True)
+    try:
+        return subprocess.run(["git", "-C", cwd, *args], capture_output=True, timeout=GIT_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"git did not answer within {GIT_TIMEOUT_SECONDS} seconds") from None
 
 
 def parse_entries(output: bytes, with_origin: bool) -> list[tuple[str | None, str, str | None]]:

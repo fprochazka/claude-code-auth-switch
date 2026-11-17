@@ -147,7 +147,7 @@ This works because each profile has its own `CLAUDE_CONFIG_DIR` (no credential c
 
 Inside tmux, the launcher names a new session after the tmux session and pane: `--name "<tmux session>-p<pane number>"`, for example `api-service-p12` for pane `%12`. Other sessions can then address it by that name with `SendMessage`, which is useful together with [shared sessions](#sharing-sessions-between-profiles).
 
-The launcher adds no name when you pass `-n`/`--name` yourself, and none when you resume or continue a session (`-r`/`--resume`, `-c`/`--continue`, `--session-id`, `--fork-session`, `--from-pr`). A name given at launch replaces the saved title of a resumed session, including one set with `/rename`. When `tmux display-message` fails, the session starts without a name. Subcommands such as `claude-work-team mcp list` never get a name, because they reject the option.
+The launcher adds no name when you pass `-n`/`--name` yourself, and none when you resume or continue a session (`-r`/`--resume`, `-c`/`--continue`, `--session-id`, `--fork-session`, `--from-pr`). A name given at launch replaces the saved title of a resumed session, including one set with `/rename`. When `tmux display-message` fails or does not answer within 2 seconds, the session starts without a name. Subcommands such as `claude-work-team mcp list` never get a name, because they reject the option.
 
 ### Additional directories
 
@@ -200,7 +200,7 @@ The installer and `cc-auth-switch start` also refuse to use a secrets file that 
 1. The file is **tracked** in git → error. Remove it from the index with `git rm --cached`, then ignore it.
 2. The file is inside a git repository and **not ignored** → error. Add its name to `.gitignore`.
 
-A file outside any git repository passes both checks, and a missing `git` binary skips them.
+A file outside any git repository passes both checks, and a missing `git` binary skips them. A git call that does not answer within 5 seconds is an error, because the file cannot be shown safe without it.
 
 Because `~/.claude` is a good candidate for version control, this matters most there. With an allowlist-style `.gitignore` — a leading `*` plus `!` entries for the files you want — the secrets file is ignored by default and needs no rule, while the main config needs an explicit `!/auth-switch.yaml` line to be committed at all.
 
@@ -235,7 +235,7 @@ The attribution is fixed when Claude starts. A session started in a personal rep
 
 Subcommands such as `claude-personal mcp list` do not get the setting. If you pass your own `--settings` to a launcher, the launcher does not add its own, because Claude Code keeps only the last `--settings` flag instead of merging them. Put the attribution into your settings file when you need both.
 
-If git cannot read the config, the launcher prints a one-line warning and starts Claude without the git config attribution.
+If git cannot read the config, or a git call does not answer within 5 seconds, the launcher prints a one-line warning and starts Claude without the git config attribution.
 
 ### Plugins
 

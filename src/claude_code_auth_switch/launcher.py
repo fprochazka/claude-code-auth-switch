@@ -33,6 +33,9 @@ SUBCOMMANDS = frozenset({
 NAME_SKIP_FLAGS = ("-n", "--name", "-r", "--resume", "-c", "--continue", "--session-id", "--fork-session", "--from-pr")
 NAME_SKIP_FLAGS_WITH_VALUE = ("--name", "--resume", "--session-id", "--from-pr")
 
+# A tmux server that does not answer costs the session name, never the launch.
+TMUX_TIMEOUT_SECONDS = 2
+
 # Inherited variables of these prefixes are dropped, so a launch from inside another Claude Code
 # session does not carry over its account, config dir or session state.
 CLEARED_ENV_PREFIXES = ("CLAUDE_", "ANTHROPIC_")
@@ -193,8 +196,8 @@ def logical_cwd(environ: Mapping[str, str]) -> str:
 
 def tmux_session_of(pane: str) -> str | None:
     try:
-        result = subprocess.run(["tmux", "display-message", "-p", "-t", pane, "#S"], capture_output=True)
-    except OSError:
+        result = subprocess.run(["tmux", "display-message", "-p", "-t", pane, "#S"], capture_output=True, timeout=TMUX_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
         return None
     if result.returncode != 0:
         return None

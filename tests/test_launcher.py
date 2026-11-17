@@ -140,3 +140,44 @@ def test_start_does_not_load_the_installer(sandbox):
     result = subprocess.run([sys.executable, "-c", script, str(config)], env=sandbox.env, capture_output=True, text=True, cwd=sandbox.home)
 
     assert result.stdout.strip() == "[] ['-p', 'hi']", result.stderr
+
+
+@pytest.fixture
+def hanging(tmp_path, monkeypatch):
+    """Put a git and a tmux that never answer first on PATH."""
+    fake_bin = tmp_path / "hanging-bin"
+    fake_bin.mkdir()
+    for name in ("git", "tmux"):
+        (fake_bin / name).write_text("#!/bin/sh\nexec sleep 30\n")
+        (fake_bin / name).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}:/usr/bin:/bin")
+    return tmp_path
+
+
+def test_secrets_check_stops_when_git_does_not_answer(hanging, monkeypatch, capsys):
+    from claude_code_auth_switch import config
+
+    monkeypatch.setattr(config, "GIT_TIMEOUT_SECONDS", 0.3)
+    secrets = hanging / "auth-switch.secrets.yaml"
+    secrets.write_text("profiles: {}\n")
+
+    with pytest.raises(SystemExit) as exit_info:
+        config.check_secrets_git_safety(secrets)
+
+    assert exit_info.value.code == 1
+    assert f"git did not answer within 0.3 seconds while checking whether secrets file {secrets}" in capsys.readouterr().err
+
+
+def test_attribution_is_dropped_when_git_does_not_answer(hanging, monkeypatch, capsys):
+    from claude_code_auth_switch import git_attribution
+
+    monkeypatch.setattr(git_attribution, "GIT_TIMEOUT_SECONDS", 0.3)
+
+    assert launcher.git_attribution_of(str(hanging)) is None
+    assert "cannot read attribution from git config: git did not answer within 0.3 seconds" in capsys.readouterr().err
+
+
+def test_session_name_is_dropped_when_tmux_does_not_answer(hanging, monkeypatch):
+    monkeypatch.setattr(launcher, "TMUX_TIMEOUT_SECONDS", 0.3)
+
+    assert launcher.tmux_session_of("%1") is None

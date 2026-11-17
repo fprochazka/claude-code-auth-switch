@@ -173,6 +173,10 @@ def test_unparsable_config_stops_the_launch(installed, sandbox):
     ("    env: [A, B]\n", "profile 'modeled': 'env' must be a mapping"),
     ("    add_dirs: ~/single\n", "profile 'modeled': 'add_dirs' must be a list of paths"),
     ("    pinned_models:\n      gpt: x\n", "unknown pinned_models class 'gpt'"),
+    ("    env:\n      A=B: x\n", "profile 'modeled': env variable name 'A=B' is not a valid shell variable name"),
+    ("    env:\n      1X: x\n", "profile 'modeled': env variable name '1X' is not a valid shell variable name"),
+    ('    env:\n      A: "a\\0b"\n', "profile 'modeled': env value of 'A' contains a NUL character"),
+    ('    add_dirs:\n      - "/a\\0b"\n', "profile 'modeled': an 'add_dirs' entry contains a NUL character"),
 ])
 def test_invalid_profile_stops_the_launch(installed, sandbox, profile_yaml, error):
     bin_dir, env = installed
@@ -180,6 +184,16 @@ def test_invalid_profile_stops_the_launch(installed, sandbox, profile_yaml, erro
     config.write_text(config.read_text() + profile_yaml)
 
     assert_launch_refused(run_wrapper(bin_dir, env, "modeled", sandbox.home), error, str(config))
+
+
+def test_install_refuses_an_env_name_that_cannot_reach_claude(installed, sandbox):
+    config = sandbox.home / "auth-switch.yaml"
+    config.write_text(config.read_text() + "    env:\n      A-B: x\n")
+
+    result = sandbox.run_install("--config", str(config), check=False)
+
+    assert result.returncode == 1
+    assert f"Error: {config}: profile 'modeled': env variable name 'A-B' is not a valid shell variable name" in result.stderr
 
 
 def test_removed_profile_stops_the_launch(installed, sandbox):

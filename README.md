@@ -326,7 +326,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | `profiles.<name>.description` | `""` | Human-readable profile description |
 | `profiles.<name>.model` | | Default model to use (e.g., `sonnet`, `opus`). Overridden by `--model` on the command line. |
 | `profiles.<name>.pinned_models` | `{}` | Map of model class (`sonnet`, `opus`, `haiku`, `fable`) to a specific version id. Set as `ANTHROPIC_DEFAULT_<CLASS>_MODEL` env vars at launch. See [Pinned model versions](#pinned-model-versions). |
-| `profiles.<name>.env` | `{}` | Environment variables to set before launching Claude. Values are passed as written, without shell expansion of `$` or backticks. |
+| `profiles.<name>.env` | `{}` | Environment variables to set before launching Claude. A name must be a valid shell variable name: letters, digits and `_`, not starting with a digit. Values are passed as written, without shell expansion of `$` or backticks, and must not contain a NUL character. |
 | `profiles.<name>.add_dirs` | `[]` | Additional directories to pass via `--add-dir` |
 | `profiles.<name>.attribution` | | Attribution settings object patched into the profile's `settings.json` on every install. A `[claude-code "attribution"]` git config section overrides it per key, see [Attribution from git config](#attribution-from-git-config). |
 | `profiles.<name>.attribution.commit` | | Attribution text appended to git commit messages |
@@ -364,7 +364,7 @@ The `claude-<name>` launchers run this command with the `--config` path that `in
 4. Otherwise adds `--add-dir` for each `add_dirs` entry, `--settings` with the [attribution from git config](#attribution-from-git-config), the [tmux session name](#session-names-in-tmux) and `--model`, each unless you passed the same option yourself.
 5. Replaces itself with `claude`.
 
-A config that is missing, cannot be parsed, or fails validation stops the launch. So does a profile that the config no longer defines, and a secrets file that is invalid, unreadable or not ignored by git. `start` then prints the config path and the error and exits with a non-zero status, without starting Claude. Fix the config and launch again; a reinstall is only needed for the settings that `install` writes into the profile directory.
+A config that is missing, cannot be parsed, or fails validation stops the launch. So does a profile that the config no longer defines, and a secrets file that is invalid, unreadable or not ignored by git. `start` then prints the config path and the error and exits with a non-zero status, without starting Claude. Any other error in `start` also stops the launch, with one line that names the profile, the config path and the error. Fix the config and launch again; a reinstall is only needed for the settings that `install` writes into the profile directory.
 
 | Flag | Description |
 |------|-------------|
@@ -544,6 +544,8 @@ To see what a launch runs, put a fake `claude` that prints its arguments and env
 ```bash
 PATH=/tmp/fake-claude-dir:$PATH uv run cc-auth-switch start --config /tmp/auth-switch.yaml work -p hello
 ```
+
+An unexpected error in `start` prints one line instead of a traceback. To get the traceback, set `CC_AUTH_SWITCH_DEBUG=1` for the launch, for example `CC_AUTH_SWITCH_DEBUG=1 claude-work -p hello`. The name is outside `CLAUDE_*`, so `start` does not drop it.
 
 ## Releasing
 

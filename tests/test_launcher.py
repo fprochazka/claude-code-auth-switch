@@ -181,3 +181,35 @@ def test_session_name_is_dropped_when_tmux_does_not_answer(hanging, monkeypatch)
     monkeypatch.setattr(launcher, "TMUX_TIMEOUT_SECONDS", 0.3)
 
     assert launcher.tmux_session_of("%1") is None
+
+
+@pytest.fixture
+def work_config(tmp_path):
+    config = tmp_path / "auth-switch.yaml"
+    config.write_text(f"profiles_dir: {tmp_path / 'profiles'}\nprofiles:\n  work: {{}}\n")
+    return config
+
+
+def test_unexpected_error_stops_the_launch_with_one_line_and_no_traceback(work_config, monkeypatch, capsys):
+    def boom(*args):
+        raise RuntimeError("something broke")
+
+    monkeypatch.setattr(launcher, "build_launch", boom)
+    monkeypatch.delenv(launcher.DEBUG_ENV, raising=False)
+
+    assert launcher.main(["--config", str(work_config), "work"]) == 1
+    err = capsys.readouterr().err
+    assert f"not starting Claude for profile 'work' with {work_config}: RuntimeError: something broke" in err
+    assert "set CC_AUTH_SWITCH_DEBUG=1 to see the traceback" in err
+    assert "Traceback" not in err
+
+
+def test_debug_variable_lets_the_traceback_through(work_config, monkeypatch):
+    def boom(*args):
+        raise RuntimeError("something broke")
+
+    monkeypatch.setattr(launcher, "build_launch", boom)
+    monkeypatch.setenv(launcher.DEBUG_ENV, "1")
+
+    with pytest.raises(RuntimeError, match="something broke"):
+        launcher.main(["--config", str(work_config), "work"])

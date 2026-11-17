@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -39,6 +40,13 @@ TMUX_TIMEOUT_SECONDS = 2
 # Inherited variables of these prefixes are dropped, so a launch from inside another Claude Code
 # session does not carry over its account, config dir or session state.
 CLEARED_ENV_PREFIXES = ("CLAUDE_", "ANTHROPIC_")
+
+
+# Names that bash's `export NAME=...` accepted; the bash wrappers of earlier versions stopped at any other.
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# Set to 1 to get the traceback of an unexpected error in `start` instead of a one-line message.
+DEBUG_ENV = "CC_AUTH_SWITCH_DEBUG"
 
 
 class ConfigError(Exception):
@@ -145,12 +153,23 @@ def resolve_profile(config: dict, secrets: dict[str, dict[str, str]], profiles_b
     env_vars = merge_secret_env(name, env_vars, secrets.get(name, {}))
     # An explicit env: entry wins over the value derived from pinned_models.
     env_vars = {**pinned_models_to_env(name, mapping("pinned_models")), **env_vars}
+    for key, value in env_vars.items():
+        if not ENV_NAME.fullmatch(key):
+            raise ConfigError(f"profile '{name}': env variable name {key!r} is not a valid shell variable name (letters, digits and _, not starting with a digit)")
+        if "\0" in value:
+            raise ConfigError(f"profile '{name}': env value of '{key}' contains a NUL character")
 
     add_dirs = profile_config.get("add_dirs") or []
     if not isinstance(add_dirs, list) or not all(isinstance(directory, str) for directory in add_dirs):
         raise ConfigError(f"profile '{name}': 'add_dirs' must be a list of paths")
+    if any("\0" in directory for directory in add_dirs):
+        raise ConfigError(f"profile '{name}': an 'add_dirs' entry contains a NUL character")
 
     model = profile_config.get("model") or None
+    if model is not None and "\0" in str(model):
+        raise ConfigError(f"profile '{name}': 'model' contains a NUL character")
+    if "\0" in str(profiles_base):
+        raise ConfigError("'profiles_dir' contains a NUL character")
     return Profile(
         name=name,
         config_dir=profiles_base / name,
@@ -237,6 +256,18 @@ def main(argv: Sequence[str]) -> int:
         return 2
 
     config_path = resolve_config_path(config_arg, DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH)
+    try:
+        return launch_profile(config_path, name, user_args)
+    except Exception as error:  # noqa: BLE001 -- any failure must stop the launch with a message, not a traceback
+        if os.environ.get(DEBUG_ENV) == "1":
+            raise
+        print(f"{PROG}: not starting Claude for profile '{name}' with {config_path}: {type(error).__name__}: {error}", file=sys.stderr)
+        print(f"{PROG}: set {DEBUG_ENV}=1 to see the traceback", file=sys.stderr)
+        return 1
+
+
+def launch_profile(config_path: Path, name: str, user_args: list[str]) -> int:
+    """Resolve the profile and replace this process with claude. Returns only when the launch cannot happen."""
     try:
         profile = load_profile(config_path, name)
     except ConfigError as error:

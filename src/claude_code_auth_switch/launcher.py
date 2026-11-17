@@ -56,6 +56,10 @@ DEBUG_ENV = "CC_AUTH_SWITCH_DEBUG"
 
 AGENT_ROLE_FLAG = "--agent-role"
 
+# With one of these, claude prints and exits without a session, so start passes the arguments through
+# as for a subcommand: no role, no prompt file check, no session name.
+PASSTHROUGH_FLAGS = frozenset({"-v", "--version", "-h", "--help"})
+
 # The system prompt flag of each prompt mode, and the user flags that replace it.
 PROMPT_FLAGS = {
     "append": ("--append-system-prompt-file", ("--append-system-prompt", "--append-system-prompt-file")),
@@ -188,17 +192,44 @@ def read_settings_value(value: str, cwd: str) -> dict:
 
 
 def take_agent_role(args: Sequence[str], roles: Mapping[str, Role]) -> tuple[str | None, list[str]]:
-    """Remove --agent-role from the arguments, which claude does not know. Returns (the last role name or None, the rest)."""
-    values, rest = pop_option(args, AGENT_ROLE_FLAG)
-    if AGENT_ROLE_FLAG in rest[: rest.index("--") if "--" in rest else len(rest)]:
-        raise LaunchError(f"{AGENT_ROLE_FLAG} needs a role name, or '{NO_ROLE}' for no role")
-    if not values:
+    """Read --agent-role from start's own region, the arguments before the first one for claude.
+
+    Returns (the last role name or None, the arguments for claude). An --agent-role further on is an
+    error, except inside a subcommand's arguments or after `--`, which belong to claude.
+    """
+    requested: str | None = None
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == AGENT_ROLE_FLAG:
+            if index + 1 >= len(args) or args[index + 1].startswith("-"):
+                raise LaunchError(f"{AGENT_ROLE_FLAG} needs a role name, or '{NO_ROLE}' for no role")
+            requested, index = args[index + 1], index + 2
+        elif arg.startswith(f"{AGENT_ROLE_FLAG}="):
+            requested, index = arg.removeprefix(f"{AGENT_ROLE_FLAG}="), index + 1
+        else:
+            break
+    rest = list(args[index:])
+    if not (rest and rest[0] in SUBCOMMANDS):
+        before_terminator = rest[: rest.index("--")] if "--" in rest else rest
+        if any(arg == AGENT_ROLE_FLAG or arg.startswith(f"{AGENT_ROLE_FLAG}=") for arg in before_terminator):
+            raise LaunchError(f"{AGENT_ROLE_FLAG} must come before the arguments for claude, right after the profile: claude-<profile> {AGENT_ROLE_FLAG} <name> [claude arguments...]")
+    if requested is None:
         return None, rest
-    requested = values[-1]
+    if not requested:
+        raise LaunchError(f"{AGENT_ROLE_FLAG} needs a role name, or '{NO_ROLE}' for no role")
     if requested != NO_ROLE and requested not in roles:
         defined = ", ".join(sorted(roles)) or "none, the config has no roles: section"
         raise LaunchError(f"{AGENT_ROLE_FLAG}: role '{requested}' is not defined in the config (defined roles: {defined})")
     return requested, rest
+
+
+def is_passthrough(args: Sequence[str]) -> bool:
+    """Tell whether claude runs a subcommand, or prints its version or help instead of starting a session."""
+    if args and args[0] in SUBCOMMANDS:
+        return True
+    before_terminator = args[: list(args).index("--")] if "--" in args else args
+    return any(arg in PASSTHROUGH_FLAGS for arg in before_terminator)
 
 
 def role_args(role: Role, args: Sequence[str]) -> list[str]:
@@ -270,7 +301,7 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
     env["FP_CC_AUTH_SWITCH_PROFILE"] = profile.name
     env.update(profile.env)
 
-    if args and args[0] in SUBCOMMANDS:
+    if is_passthrough(args):
         return Launch(args, env)
 
     notes: list[str] = []

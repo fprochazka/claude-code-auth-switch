@@ -207,7 +207,7 @@ profiles:
     default_role: worker
 ```
 
-Pick a role with `--agent-role <name>` or `--agent-role=<name>`. `start` consumes the flag and never passes it to `claude`. A profile's `default_role` applies when the command line has no `--agent-role`, and `--agent-role none` starts without a role even then. A resumed session gets the role it ran as, see [Resuming a session with a role](#resuming-a-session-with-a-role). A role that the config does not define, in the flag or in `default_role`, stops the launch with an error. Subcommands such as `mcp list` never get a role.
+Pick a role with `--agent-role <name>` or `--agent-role=<name>`, right after the profile and before the arguments for `claude`: `claude-personal --agent-role dispatcher -p hi`. `start` consumes the flag and never passes it to `claude`. Further on, before a `--`, the flag is an error, because `claude` would reject it; inside a subcommand's arguments it belongs to the subcommand. A profile's `default_role` applies when the command line has no `--agent-role`, and `--agent-role none` starts without a role even then. A resumed session gets the role it ran as, see [Resuming a session with a role](#resuming-a-session-with-a-role). A role that the config does not define, in the flag or in `default_role`, stops the launch with an error. Subcommands such as `mcp list`, and `-v`/`--version` or `-h`/`--help` anywhere before a `--`, never get a role, so a missing prompt file does not break `claude-personal --version`.
 
 Every key maps to one `claude` flag, see the [configuration reference](#auth-switchyaml). Precedence is profile, then role, then your own flags, the last one winning:
 
@@ -437,9 +437,9 @@ cc-auth-switch start [--config PATH] <profile> [claude arguments...]
 The `claude-<name>` launchers run this command with the `--config` path that `install` used. Everything after the profile goes to `claude`, except `--agent-role` and a `--settings` that `start` merges into its own. In this order, `start`:
 
 1. Reads the config and the secrets file, and resolves the profile's `env`, `pinned_models`, `model`, `add_dirs` and `default_role`, and the `roles:` section.
-2. Removes `--agent-role` from the arguments.
+2. Removes `--agent-role` from the start of the arguments.
 3. Drops every inherited `CLAUDE_*` and `ANTHROPIC_*` variable, and the `FP_CC_AUTH_SWITCH_ROLE*` variables, so a launch from inside another Claude Code session does not inherit its account or its role. Then it sets `CLAUDE_CONFIG_DIR`, `FP_CC_AUTH_SWITCH_PROFILE` and the profile's `env`.
-4. Passes the arguments through when the first one is a Claude Code subcommand such as `mcp`, `auth` or `plugin`, because subcommands reject the session options.
+4. Passes the arguments through when the first one is a Claude Code subcommand such as `mcp`, `auth` or `plugin`, because subcommands reject the session options. It does the same when `-v`, `--version`, `-h` or `--help` comes before any `--`, because `claude` then prints and exits without a session.
 5. Otherwise picks the [role](#roles), also the role a [resumed session](#resuming-a-session-with-a-role) ran as, sets its `env` and the role variables, and adds `--add-dir` for each `add_dirs` entry of the profile and the role, `--settings` with the [attribution from git config](#attribution-from-git-config), the role's `settings` and your own `--settings` merged into it, the [tmux session name](#session-names-in-tmux), the role's flags, `--system-prompt-snapshot off` when a resume switches the role, and `--model`. It adds the name, the model and the role's single-value flags only when you did not pass the same option yourself.
 6. Prints its notes to stderr, and replaces itself with `claude`.
 
@@ -448,7 +448,7 @@ A config that is missing, cannot be parsed, or fails validation stops the launch
 | Flag | Description |
 |------|-------------|
 | `--config PATH` | Config file path, as for `install` |
-| `--agent-role NAME`, `--agent-role=NAME` | Apply the role `NAME` from `roles:`, or no role with `none`. Goes after the profile, among the `claude` arguments. See [Roles](#roles). |
+| `--agent-role NAME`, `--agent-role=NAME` | Apply the role `NAME` from `roles:`, or no role with `none`. Goes right after the profile, before the `claude` arguments. See [Roles](#roles). |
 
 ### `cc-auth-switch rollback-sessions <profile>`
 

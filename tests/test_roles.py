@@ -209,7 +209,32 @@ def test_arguments_after_double_dash_stay_with_claude():
     assert build_launch(PROFILE, ["--", "--agent-role", "x"], context(), ROLES).argv == ["--add-dir", "/profile dir", "--", "--agent-role", "x", "--model", "sonnet"]
 
 
+@pytest.mark.parametrize("args", [["--version"], ["-v"], ["-p", "x", "--help"], ["-h"]])
+def test_version_and_help_pass_through_without_role_or_prompt_check(args):
+    inherited = {"TMUX": "/t", "TMUX_PANE": "%7", **dict.fromkeys(ROLE_ENV, "parent")}
+    profile = dataclasses.replace(PROFILE, default_role="dispatcher")
+
+    for role_args in ([], ["--agent-role", "worker"]):
+        launch = build_launch(profile, [*role_args, *args], context(inherited, files=()), ROLES)
+        assert launch.argv == args
+        assert not any(key in launch.env for key in ROLE_ENV)
+
+
+def test_help_after_double_dash_is_a_prompt_word():
+    argv = build_launch(PROFILE, ["--", "-h"], context(), ROLES).argv
+
+    assert "--model" in argv and argv[argv.index("--"):][:2] == ["--", "-h"]
+
+
+def test_agent_role_inside_a_subcommand_belongs_to_the_subcommand():
+    assert build_launch(PROFILE, ["--agent-role", "worker", "mcp", "add", "--agent-role", "x"], context(), ROLES).argv == ["mcp", "add", "--agent-role", "x"]
+
+
 @pytest.mark.parametrize("args, message", [
+    (["-p", "hi", "--agent-role", "worker"], "--agent-role must come before the arguments for claude"),
+    (["-c", "--agent-role=worker"], "--agent-role must come before the arguments for claude"),
+    (["--agent-role="], "--agent-role needs a role name"),
+    (["--agent-role", "-p"], "--agent-role needs a role name"),
     (["--agent-role", "ghost"], r"--agent-role: role 'ghost' is not defined in the config \(defined roles: bare, dispatcher, hooked, worker\)"),
     (["--agent-role"], "--agent-role needs a role name, or 'none'"),
 ])
@@ -383,8 +408,8 @@ def test_continue_gets_no_role_and_a_notice_when_the_newest_session_had_one():
 
 
 def test_continue_with_a_role_compares_with_the_newest_session():
-    same = build_launch(PROFILE, ["-c", "--agent-role", "worker"], resume_context(newest={"role": "worker"})[0], ROLES)
-    other = build_launch(PROFILE, ["-c", "--agent-role", "worker"], resume_context(newest=None)[0], ROLES)
+    same = build_launch(PROFILE, ["--agent-role", "worker", "-c"], resume_context(newest={"role": "worker"})[0], ROLES)
+    other = build_launch(PROFILE, ["--agent-role", "worker", "-c"], resume_context(newest=None)[0], ROLES)
 
     assert "--system-prompt-snapshot" not in same.argv
     assert other.notes == ("resuming the newest session here, which ran as no role, with role 'worker': --system-prompt-snapshot off sends the new system prompt, at the cost of prompt cache reuse for this run",)

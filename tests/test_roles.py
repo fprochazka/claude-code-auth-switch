@@ -46,7 +46,7 @@ def context(environ=None, attribution=None, files=("/roles/dispatcher.md", "/rol
         environ=environ or {},
         tmux_session=lambda pane: None,
         git_attribution=lambda cwd: attribution,
-        is_file=lambda path: path in files,
+        prompt_file_problem=lambda path: None if path in files else "No such file or directory",
     )
 
 
@@ -448,8 +448,24 @@ def test_unknown_or_missing_agent_role_stops_the_launch(args, message):
 
 
 def test_missing_prompt_file_stops_the_launch_with_the_path():
-    with pytest.raises(LaunchError, match="role 'dispatcher': the prompt file /roles/dispatcher.md does not exist"):
-        build_launch(PROFILE, ["--agent-role", "dispatcher"], context(files=()), ROLES)
+    message = "role 'dispatcher': cannot read the prompt file /roles/dispatcher.md: No such file or directory"
+    profile = dataclasses.replace(PROFILE, default_role="dispatcher")
+
+    for args in (["--agent-role", "dispatcher"], []):
+        with pytest.raises(LaunchError, match=message):
+            build_launch(profile, args, context(files=()), ROLES)
+
+
+def test_unreadable_file_problem_names_why_a_file_cannot_be_read(tmp_path):
+    readable = tmp_path / "readable.md"
+    readable.write_text("x")
+    fifo = tmp_path / "fifo"
+    os.mkfifo(fifo)
+
+    assert launcher.unreadable_file_problem(str(readable)) is None
+    assert launcher.unreadable_file_problem(str(tmp_path / "missing.md")) == "No such file or directory"
+    assert launcher.unreadable_file_problem(str(tmp_path)) == "not a regular file"
+    assert launcher.unreadable_file_problem(str(fifo)) == "not a regular file"
 
 
 # Through the launcher
@@ -515,7 +531,21 @@ def test_launcher_refuses_an_unknown_role_and_a_missing_prompt_file(role_launch)
     assert (unknown.returncode, unknown.stdout) == (2, "")
     assert "role 'ghost' is not defined" in unknown.stderr
     assert (missing.returncode, missing.stdout) == (2, "")
-    assert f"the prompt file {prompt} does not exist" in missing.stderr
+    assert f"cannot read the prompt file {prompt}: No such file or directory" in missing.stderr
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a file without read permission")
+def test_launcher_refuses_a_default_role_whose_prompt_file_cannot_be_read(role_launch):
+    run, config, prompt = role_launch
+    prompt.chmod(0o000)
+
+    try:
+        result = run("-p", "hi")
+    finally:
+        prompt.chmod(0o644)
+
+    assert (result.returncode, result.stdout) == (2, "")
+    assert f"role 'dispatcher': cannot read the prompt file {prompt}: Permission denied" in result.stderr
 
 
 def test_install_and_start_refuse_an_invalid_role(role_launch, sandbox):

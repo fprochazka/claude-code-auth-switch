@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -135,7 +136,8 @@ class LaunchContext:
     # The settings object of a user's --settings value, inline JSON or a file path relative to the cwd.
     # Raises LaunchError when it cannot be read.
     read_settings: Callable[[str, str], dict[str, Any]] = lambda value, cwd: read_settings_value(value, cwd)
-    is_file: Callable[[str], bool] = os.path.isfile
+    # Why a role's prompt file cannot be read, or None when it can.
+    prompt_file_problem: Callable[[str], str | None] = lambda path: unreadable_file_problem(path)
     # The newest start-log line of a session (config dir, session id, cwd), or None without a readable log.
     recorded_start: Callable[[Path, str, str], dict[str, Any] | None] = lambda config_dir, session_id, cwd: (
         recorded_start_of(config_dir, session_id, cwd)
@@ -190,6 +192,20 @@ def read_settings_value(value: str, cwd: str) -> dict[str, Any]:
     if not isinstance(settings, dict):
         raise LaunchError(f"--settings: {source} must hold a JSON object")
     return settings
+
+
+def unreadable_file_problem(path: str) -> str | None:
+    """Tell why a file cannot be read, or None when it can. Opens it without reading, and without blocking on a FIFO."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError as error:
+        return error.strerror or str(error)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return "not a regular file"
+    finally:
+        os.close(descriptor)
+    return None
 
 
 def take_agent_role(args: Sequence[str], roles: Mapping[str, Role]) -> tuple[str | None, list[str]]:
@@ -380,8 +396,8 @@ def build_launch(
             )
         env[ROLE_ENV] = role.name
         if role.prompt is not None:
-            if not context.is_file(role.prompt.file):
-                raise LaunchError(f"role '{role.name}': the prompt file {role.prompt.file} does not exist")
+            if problem := context.prompt_file_problem(role.prompt.file):
+                raise LaunchError(f"role '{role.name}': cannot read the prompt file {role.prompt.file}: {problem}")
             mode = role.prompt.mode
             if mode in PROMPT_FLAGS:
                 flag, user_flags = PROMPT_FLAGS[mode]

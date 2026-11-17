@@ -21,6 +21,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from claude_code_auth_switch.claude_options import has_option, remove_option, scan
 from claude_code_auth_switch.config import ENV_NAME, ConfigError
@@ -130,18 +131,20 @@ class LaunchContext:
     # Name of the tmux session that holds a pane, or None when tmux cannot say.
     tmux_session: Callable[[str], str | None]
     # Settings from the [claude-code "attribution"] git config for a directory, or None.
-    git_attribution: Callable[[str], dict | None]
+    git_attribution: Callable[[str], dict[str, Any] | None]
     # The settings object of a user's --settings value, inline JSON or a file path relative to the cwd.
     # Raises LaunchError when it cannot be read.
-    read_settings: Callable[[str, str], dict] = lambda value, cwd: read_settings_value(value, cwd)
+    read_settings: Callable[[str, str], dict[str, Any]] = lambda value, cwd: read_settings_value(value, cwd)
     is_file: Callable[[str], bool] = os.path.isfile
     # The newest start-log line of a session (config dir, session id, cwd), or None without a readable log.
-    recorded_start: Callable[[Path, str, str], dict | None] = lambda config_dir, session_id, cwd: recorded_start_of(
-        config_dir, session_id, cwd
+    recorded_start: Callable[[Path, str, str], dict[str, Any] | None] = lambda config_dir, session_id, cwd: (
+        recorded_start_of(config_dir, session_id, cwd)
     )
     # The newest start-log line of the newest session in a directory (config dir, cwd), as -c would continue it.
     # An empty dict when that session has no log, None when the directory has no session.
-    newest_start: Callable[[Path, str], dict | None] = lambda config_dir, cwd: newest_start_in(config_dir, cwd)
+    newest_start: Callable[[Path, str], dict[str, Any] | None] = lambda config_dir, cwd: newest_start_in(
+        config_dir, cwd
+    )
 
 
 @dataclass(frozen=True)
@@ -152,13 +155,13 @@ class Launch:
     notes: tuple[str, ...] = ()
 
 
-def merge_settings(*layers: dict | None) -> dict:
+def merge_settings(*layers: dict[str, Any] | None) -> dict[str, Any]:
     """Deep-merge settings objects; a later layer wins per key, nested objects merge.
 
     Lists are concatenated without duplicates, as Claude Code merges its own settings sources, so a
     permissions.allow list in a later layer adds rules instead of replacing the earlier ones.
     """
-    merged: dict = {}
+    merged: dict[str, Any] = {}
     for layer in layers:
         for key, value in (layer or {}).items():
             if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -170,7 +173,7 @@ def merge_settings(*layers: dict | None) -> dict:
     return merged
 
 
-def read_settings_value(value: str, cwd: str) -> dict:
+def read_settings_value(value: str, cwd: str) -> dict[str, Any]:
     """Read a --settings value the way Claude Code takes it: a JSON object, or the path of a JSON file."""
     if value.lstrip().startswith("{"):
         source, text = "inline JSON", value
@@ -328,7 +331,7 @@ def build_launch(
         resumed = ("id", resumed[1]) if known else None
     if resumed is not None:
         kind, session_id = resumed
-        recorded: dict | None = None
+        recorded: dict[str, Any] | None = None
         if kind == "id":
             recorded = context.recorded_start(profile.config_dir, session_id, context.cwd) or {}
         elif kind == "continue":
@@ -445,14 +448,14 @@ def project_dir_names(cwd: str) -> list[str]:
     return names
 
 
-def recorded_start_of(config_dir: Path, session_id: str, cwd: str) -> dict | None:
+def recorded_start_of(config_dir: Path, session_id: str, cwd: str) -> dict[str, Any] | None:
     from claude_code_auth_switch.session_start import LOG_NAME, read_newest_line
 
     # A resume can start anywhere, and a session that moved between directories, or a copy of it, can
     # have a log in more than one project directory. The newest line by ts wins. Without a ts, or on a
     # tie, the log in the start directory's project directory wins, then the log written last.
     cwd_patterns = project_dir_names(cwd)
-    ranked: list[tuple[tuple[int, bool, float], dict]] = []
+    ranked: list[tuple[tuple[int, bool, float], dict[str, Any]]] = []
     for log in (config_dir / "projects").glob(f"*/{session_id}/{LOG_NAME}"):
         line = read_newest_line(log)
         if line is None:
@@ -466,12 +469,12 @@ def recorded_start_of(config_dir: Path, session_id: str, cwd: str) -> dict | Non
     return max(ranked, key=lambda entry: entry[0])[1] if ranked else None
 
 
-def line_ts(line: dict) -> int:
+def line_ts(line: dict[str, Any]) -> int:
     ts = line.get("ts")
     return ts if isinstance(ts, int) and not isinstance(ts, bool) else -1
 
 
-def newest_start_in(config_dir: Path, cwd: str) -> dict | None:
+def newest_start_in(config_dir: Path, cwd: str) -> dict[str, Any] | None:
     from claude_code_auth_switch.session_start import LOG_NAME, read_newest_line
 
     newest: tuple[float, Path] | None = None
@@ -488,7 +491,9 @@ def newest_start_in(config_dir: Path, cwd: str) -> dict | None:
     return read_newest_line(newest[1].with_suffix("") / LOG_NAME) or {}
 
 
-def resolve_profile(config: dict, secrets: dict[str, dict[str, str]], profiles_base: Path, name: str) -> Profile:
+def resolve_profile(
+    config: dict[str, Any], secrets: dict[str, dict[str, str]], profiles_base: Path, name: str
+) -> Profile:
     """Turn a profile's config entry into a Profile, validating every key that a launch uses."""
     from claude_code_auth_switch.config import expand_path, merge_secret_env, pinned_models_to_env
 
@@ -499,7 +504,7 @@ def resolve_profile(config: dict, secrets: dict[str, dict[str, str]], profiles_b
     if not isinstance(profile_config, dict):
         raise ConfigError(f"profile '{name}' must be a mapping")
 
-    def mapping(key: str) -> dict:
+    def mapping(key: str) -> dict[str, Any]:
         value = profile_config.get(key) or {}
         if not isinstance(value, dict):
             raise ConfigError(f"profile '{name}': '{key}' must be a mapping")
@@ -591,7 +596,7 @@ def tmux_session_of(pane: str) -> str | None:
     return os.fsdecode(result.stdout).rstrip("\n") or None
 
 
-def git_attribution_of(directory: str) -> dict | None:
+def git_attribution_of(directory: str) -> dict[str, Any] | None:
     from claude_code_auth_switch import git_attribution
 
     try:

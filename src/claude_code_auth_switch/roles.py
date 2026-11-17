@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from typing import Any
 
 from claude_code_auth_switch.claude_options import BOOLEAN, CANONICAL, CLAUDE_VERSION, KIND
 from claude_code_auth_switch.config import ENV_NAME, ConfigError
@@ -63,7 +64,7 @@ class Role:
     effort: str | None = None
     permission_mode: str | None = None
     autocompact: str | None = None
-    settings: dict = field(default_factory=dict)
+    settings: dict[str, Any] = field(default_factory=dict)
     tools: tuple[str, ...] = ()
     allowed_tools: tuple[str, ...] = ()
     disallowed_tools: tuple[str, ...] = ()
@@ -94,7 +95,7 @@ def resolve_role(name: str, role_config: object) -> Role:
             f"unknown key {', '.join(repr(key) for key in unknown)} (known keys: {', '.join(sorted(KNOWN_KEYS))})"
         )
 
-    values: dict = {}
+    values: dict[str, Any] = {}
     for key in STRING_KEYS:
         value = role_config.get(key)
         if value is not None and (not isinstance(value, str) or not value.strip()):
@@ -223,7 +224,7 @@ def resolve_prompt(prompt: object, error) -> RolePrompt | None:
     return RolePrompt(file=file, mode=mode)
 
 
-def resolve_roles(config: dict) -> dict[str, Role]:
+def resolve_roles(config: dict[str, Any]) -> dict[str, Role]:
     """Validate the `roles:` section and return the roles by name."""
     roles = config.get("roles")
     if roles is None:

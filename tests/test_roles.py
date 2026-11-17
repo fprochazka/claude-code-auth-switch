@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -477,7 +478,7 @@ def role_launch(sandbox):
     (fake_bin / "claude").chmod(0o755)
     env = {**sandbox.env, "PATH": f"{fake_bin}{os.pathsep}{sandbox.env['PATH']}", "FP_CC_AUTH_SWITCH_ROLE": "inherited"}
 
-    def run(*args: str) -> subprocess.CompletedProcess:
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [str(sandbox.home / "bin/claude-work"), *args], cwd=sandbox.home, env=env, capture_output=True, text=True
         )
@@ -533,8 +534,8 @@ def test_install_and_start_refuse_an_invalid_role(role_launch, sandbox):
 SESSION = "0b6f2c1e-1111-4222-8333-444455556666"
 
 
-def resume_context(recorded=None, newest=None, **kwargs) -> tuple[LaunchContext, list]:
-    calls: list = []
+def resume_context(recorded=None, newest=None, **kwargs) -> tuple[LaunchContext, list[tuple[Any, ...]]]:
+    calls: list[tuple[Any, ...]] = []
 
     def recorded_start(config_dir, session_id, cwd):
         calls.append(("recorded", config_dir, session_id, cwd))

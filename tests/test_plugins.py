@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 import pytest
 
@@ -10,8 +11,8 @@ def plugin_setup(sandbox):
     source_dir = sandbox.mkdir(".claude")
     profiles = sandbox.home / "profiles"
 
-    def write_source(enabled: dict | None, marketplaces: dict | None = None) -> None:
-        data: dict = {"theme": "dark"}
+    def write_source(enabled: dict[str, Any] | None, marketplaces: dict[str, Any] | None = None) -> None:
+        data: dict[str, Any] = {"theme": "dark"}
         if enabled is not None:
             data["enabledPlugins"] = enabled
         if marketplaces is not None:
@@ -32,7 +33,7 @@ def plugin_setup(sandbox):
             )
         )
 
-    def settings(profile: str) -> dict:
+    def settings(profile: str) -> dict[str, Any]:
         return json.loads((profiles / profile / "settings.json").read_text())
 
     return write_source, write_config, settings, profiles

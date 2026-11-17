@@ -4,6 +4,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -21,7 +22,7 @@ class HelperResult:
     stderr: str
 
     @property
-    def settings(self) -> dict | None:
+    def settings(self) -> dict[str, Any] | None:
         return json.loads(self.stdout) if self.stdout.strip() else None
 
 
@@ -66,7 +67,7 @@ class GitSandbox:
         subprocess.run(["git", "init", "-q", str(path)], env=self.env, check=True)
         return path
 
-    def run_install(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    def run_install(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["cc-auth-switch", "install", *args],
             env=self.env,

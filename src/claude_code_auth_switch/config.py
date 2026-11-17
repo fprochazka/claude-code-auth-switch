@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -43,7 +44,7 @@ def read_yaml(path: Path) -> object:
         sys.exit(1)
 
 
-def load_config(config_path: Path) -> dict:
+def load_config(config_path: Path) -> dict[str, Any]:
     config = read_yaml(config_path)
     if not isinstance(config, dict) or "profiles" not in config:
         print(f"Error: No profiles defined in {config_path}", file=sys.stderr)
@@ -140,7 +141,7 @@ def check_secrets_git_safety(secrets_path: Path) -> None:
     sys.exit(1)
 
 
-def load_secrets(secrets_path: Path, config: dict) -> dict[str, dict[str, str]]:
+def load_secrets(secrets_path: Path, config: dict[str, Any]) -> dict[str, dict[str, str]]:
     """Read the secrets file into {profile_name: {env_key: value}}.
 
     The file mirrors the main config but allows only profiles.<name>.env with string values.
@@ -206,7 +207,7 @@ def expand_path(path_str: str) -> Path:
     return Path(os.path.expanduser(path_str))
 
 
-def pinned_models_to_env(profile_name: str, pinned_models: dict) -> dict[str, str]:
+def pinned_models_to_env(profile_name: str, pinned_models: dict[str, Any]) -> dict[str, str]:
     """Translate a profile's pinned_models mapping into ANTHROPIC_DEFAULT_<CLASS>_MODEL env vars.
 
     Each entry pins what a model-class alias (sonnet/opus/haiku/fable) resolves to. An unknown
@@ -232,7 +233,7 @@ def pinned_models_to_env(profile_name: str, pinned_models: dict) -> dict[str, st
     return env
 
 
-def read_config(config_arg: Path | None) -> tuple[Path, dict]:
+def read_config(config_arg: Path | None) -> tuple[Path, dict[str, Any]]:
     config_path = resolve_config_path(config_arg, DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH)
     if not config_path.exists():
         print(f"Error: Config file not found: {config_path}", file=sys.stderr)

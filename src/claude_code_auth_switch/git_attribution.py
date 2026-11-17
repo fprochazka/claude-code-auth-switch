@@ -44,7 +44,7 @@ def warn(message: str) -> None:
 GIT_TIMEOUT_SECONDS = 5
 
 
-def git(args: list[str], cwd: str) -> subprocess.CompletedProcess:
+def git(args: list[str], cwd: str) -> subprocess.CompletedProcess[bytes]:
     try:
         return subprocess.run(["git", "-C", cwd, *args], capture_output=True, timeout=GIT_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:

@@ -115,7 +115,7 @@ def test_leftover_swap_directory_stops_the_migration(layout):
     assert not live.is_symlink()
 
 
-def in_place_writer(path: Path, stop_at: float, result: dict) -> None:
+def in_place_writer(path: Path, stop_at: float, result: dict[str, int]) -> None:
     """Rewrite a file in place by path, like Claude Code's fs.writeFile of sessions/<pid>.json."""
     seq = 0
     while time.monotonic() < stop_at:
@@ -138,7 +138,7 @@ def test_migration_loses_no_write_of_an_in_place_writer(tmp_path, trial):
         write(live / f"{1000 + i}.json", "{}")
     record = live / "4242.json"
     write(record, json.dumps({"seq": 0}))
-    result: dict = {"last": 0}
+    result: dict[str, int] = {"last": 0}
     # The writer's last write falls somewhere around the swap, then it stays idle like an idle session.
     stop_at = time.monotonic() + random.Random(trial).uniform(0, 0.004)
     writer = threading.Thread(target=in_place_writer, args=(record, stop_at, result))
@@ -171,7 +171,7 @@ def test_catch_up_copies_a_rewrite_with_the_same_mtime_when_the_shared_copy_is_s
     # one in-place rewrite. The write that followed carries the same mtime.
     old, shared = old_and_shared
     set_file(old / "4242.json", "", MTIME)
-    copied: dict = {}
+    copied: sessions.CopyRecord = {}
     sessions.copy_newer(old, shared, copied=copied)
     set_file(old / "4242.json", '{"seq": 7}', MTIME)
 
@@ -197,7 +197,7 @@ def test_catch_up_keeps_a_shared_copy_that_a_session_wrote_unless_the_old_one_is
 ):
     old, shared = old_and_shared
     set_file(old / "4242.json", "first", MTIME - 10)
-    copied: dict = {}
+    copied: sessions.CopyRecord = {}
     sessions.copy_newer(old, shared, copied=copied)
     set_file(shared / "4242.json", "session", MTIME)
     set_file(old / "4242.json", "old", old_mtime)
@@ -211,7 +211,7 @@ def test_first_pass_keeps_a_newer_shared_copy_and_catch_up_keeps_the_mtime_rule_
     old, shared = old_and_shared
     set_file(old / "4242.json", "old", MTIME - 1)
     set_file(shared / "4242.json", "shared", MTIME)
-    copied: dict = {}
+    copied: sessions.CopyRecord = {}
 
     assert sessions.copy_newer(old, shared, copied=copied) == []
     set_file(old / "4242.json", "old again", MTIME)
@@ -227,7 +227,7 @@ def test_catch_up_over_two_backups_keeps_the_newest_file_in_any_order(tmp_path, 
     old, recreated, shared = tmp_path / "old", tmp_path / "recreated", tmp_path / "shared"
     for directory in (old, recreated, shared):
         directory.mkdir()
-    copied: dict = {}
+    copied: sessions.CopyRecord = {}
     set_file(old / "4242.json", "first", MTIME - 10)
     sessions.copy_newer(old, shared, copied=copied)
     set_file(recreated / "4242.json", "recreated", MTIME + 1)
@@ -281,7 +281,7 @@ def test_a_pass_deletes_temp_files_of_a_killed_pass_and_never_copies_them(old_an
 @pytest.fixture
 def sleeper():
     """Start processes that stand in for live claude sessions, each with its own environment."""
-    started: list[subprocess.Popen] = []
+    started: list[subprocess.Popen[bytes]] = []
 
     def start(env: dict[str, str]) -> int:
         process = subprocess.Popen(["sleep", "30"], env={"PATH": os.environ["PATH"], **env})

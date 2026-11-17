@@ -2,13 +2,14 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 
-def snapshot(root: Path) -> dict[str, tuple]:
+def snapshot(root: Path) -> dict[str, tuple[Any, ...]]:
     """Every path below root with its type, content and mtime, so any change shows up."""
-    result: dict[str, tuple] = {}
+    result: dict[str, tuple[Any, ...]] = {}
     for dirpath, dirnames, filenames in os.walk(root):
         for name in dirnames + filenames:
             path = Path(dirpath) / name

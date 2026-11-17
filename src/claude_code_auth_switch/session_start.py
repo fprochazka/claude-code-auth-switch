@@ -31,6 +31,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
+from typing import Any
 
 LOG_NAME = "auth-switch-profile-starts.jsonl"
 ERROR_LOG_NAME = "auth-switch-session-start.log"
@@ -77,7 +78,7 @@ def find_claude_pid(sessions_dir: Path) -> int | None:
     return None
 
 
-def build_line(payload: dict, now_ms: int) -> dict:
+def build_line(payload: dict[str, Any], now_ms: int) -> dict[str, Any]:
     return {
         "v": FORMAT_VERSION,
         "ts": now_ms,
@@ -115,7 +116,7 @@ def record(stdin_text: str) -> None:
         os.close(fd)
 
 
-def read_newest_line(log: Path) -> dict | None:
+def read_newest_line(log: Path) -> dict[str, Any] | None:
     """Return the newest line of a start log, or None when the log is missing, unreadable or has no valid line."""
     try:
         lines = log.read_text(errors="replace").splitlines()

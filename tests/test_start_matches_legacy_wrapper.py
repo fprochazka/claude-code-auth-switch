@@ -12,6 +12,7 @@ took the words after it. legacy_in_start_order() rewrites a legacy argv into tha
 import json
 import os
 import subprocess
+from typing import Any
 from unittest import mock
 
 import pytest
@@ -175,7 +176,7 @@ def legacy_in_start_order(argv: list[str], args: list[str]) -> list[str]:
     return [*rewritten, *model, *user]
 
 
-def launch(bin_dir, profile, args, cwd, env) -> dict:
+def launch(bin_dir, profile, args, cwd, env) -> dict[str, Any]:
     result = subprocess.run(
         [str(bin_dir / f"claude-{profile}"), *args], cwd=cwd, env=env, capture_output=True, text=True
     )

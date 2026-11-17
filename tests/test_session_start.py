@@ -2,6 +2,7 @@ import json
 import shlex
 import subprocess
 import time
+from typing import Any
 
 import pytest
 
@@ -25,11 +26,11 @@ def hook_env(sandbox):
     return env, payload, profile_dir, project_dir / SESSION_ID / "auth-switch-profile-starts.jsonl"
 
 
-def run_hook(env: dict, stdin: str, argv: list[str] | None = None) -> subprocess.CompletedProcess:
+def run_hook(env: dict[str, str], stdin: str, argv: list[str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(argv or HOOK.split(), input=stdin, env=env, capture_output=True, text=True)
 
 
-def read_lines(log) -> list[dict]:
+def read_lines(log) -> list[dict[str, Any]]:
     return [json.loads(line) for line in log.read_text().splitlines()]
 
 
@@ -158,12 +159,12 @@ def install_config(sandbox):
     return config, source_dir
 
 
-def our_group(sandbox) -> dict:
+def our_group(sandbox) -> dict[str, Any]:
     command = f"{shlex.quote(str(sandbox.tool_bin / 'cc-auth-switch'))} session-start"
     return {"matcher": "", "hooks": [{"type": "command", "command": command, "timeout": 10}]}
 
 
-def settings(sandbox, profile: str) -> dict:
+def settings(sandbox, profile: str) -> dict[str, Any]:
     return json.loads((sandbox.home / "profiles" / profile / "settings.json").read_text())
 
 

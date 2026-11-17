@@ -3,6 +3,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -28,8 +29,8 @@ PROFILE = Profile(
 )
 
 
-def context(environ=None, attribution=None, tmux="sess") -> tuple[LaunchContext, list]:
-    calls: list = []
+def context(environ=None, attribution=None, tmux="sess") -> tuple[LaunchContext, list[tuple[Any, ...]]]:
+    calls: list[tuple[Any, ...]] = []
 
     def tmux_session(pane):
         calls.append(("tmux", pane))

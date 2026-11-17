@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -61,11 +62,13 @@ def installed(sandbox):
     return bin_dir, env
 
 
-def run_wrapper(bin_dir: Path, env: dict, profile: str, cwd: Path, *args: str) -> subprocess.CompletedProcess:
+def run_wrapper(
+    bin_dir: Path, env: dict[str, str], profile: str, cwd: Path, *args: str
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run([str(bin_dir / f"claude-{profile}"), *args], cwd=cwd, env=env, capture_output=True, text=True)
 
 
-def settings_from_argv(argv: list[str]) -> list[dict]:
+def settings_from_argv(argv: list[str]) -> list[dict[str, Any]]:
     return [json.loads(argv[i + 1]) for i, arg in enumerate(argv) if arg == "--settings"]
 
 
@@ -192,7 +195,7 @@ def test_missing_tool_stops_the_launch(installed, sandbox):
     assert result.stdout == ""
 
 
-def assert_launch_refused(result: subprocess.CompletedProcess, *expected: str) -> None:
+def assert_launch_refused(result: subprocess.CompletedProcess[str], *expected: str) -> None:
     assert result.returncode != 0
     assert result.stdout == "", "claude must not start"
     for text in expected:

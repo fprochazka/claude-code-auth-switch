@@ -21,6 +21,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from claude_code_auth_switch import launcher, sessions
 from claude_code_auth_switch.config import (
@@ -191,7 +192,9 @@ def write_profile_file(path: Path, content: bytes, backup: ProfileBackup | None,
         raise
 
 
-def expected_copy(source_dir: Path, filename: str, profile_config: dict, shared: SharedPatches | None) -> bytes:
+def expected_copy(
+    source_dir: Path, filename: str, profile_config: dict[str, Any], shared: SharedPatches | None
+) -> bytes:
     """Content that a profile file has right after a sync, patches included."""
     if filename == "settings.json":
         expected = build_expected_settings(source_dir / filename, profile_config, shared)
@@ -200,7 +203,7 @@ def expected_copy(source_dir: Path, filename: str, profile_config: dict, shared:
     return (source_dir / filename).read_bytes()
 
 
-def read_source_plugin_keys(source_dir: Path) -> dict | None:
+def read_source_plugin_keys(source_dir: Path) -> dict[str, Any] | None:
     """Read enabledPlugins and extraKnownMarketplaces from source_dir's settings.json.
 
     A missing file means no plugins, so the profiles lose the keys too. An unreadable file returns
@@ -219,7 +222,7 @@ def read_source_plugin_keys(source_dir: Path) -> dict | None:
 
 
 def check_plugin_overrides(
-    profile_name: str, profile_config: dict, source_dir: Path, source_plugin_keys: dict | None
+    profile_name: str, profile_config: dict[str, Any], source_dir: Path, source_plugin_keys: dict[str, Any] | None
 ) -> None:
     """Validate profiles.<name>.plugins, and warn about enabled plugins that Claude Code cannot install."""
     overrides = profile_config.get("plugins")
@@ -266,7 +269,7 @@ def check_plugin_overrides(
             )
 
 
-def share_sessions_flag(profile_name: str, profile_config: dict) -> bool:
+def share_sessions_flag(profile_name: str, profile_config: dict[str, Any]) -> bool:
     value = profile_config.get("share_sessions", False)
     if not isinstance(value, bool):
         print(f"Error: Profile '{profile_name}' has share_sessions: {value!r}, expected true or false", file=sys.stderr)
@@ -291,7 +294,7 @@ def setup_profile_dir(
     profile_dir: Path,
     source_dir: Path,
     force_sync: bool,
-    profile_config: dict | None = None,
+    profile_config: dict[str, Any] | None = None,
     shared: SharedPatches | None = None,
     backup: ProfileBackup | None = None,
 ) -> None:
@@ -400,7 +403,7 @@ def is_session_start_hook(hook: object) -> bool:
     return program == TOOL_COMMAND_NAME and words[1:2] == [SESSION_START_SUBCOMMAND]
 
 
-def merge_session_start_hook(data: dict, hook_command: str) -> None:
+def merge_session_start_hook(data: dict[str, Any], hook_command: str) -> None:
     """Own exactly one SessionStart matcher group in data["hooks"], identified by its command.
 
     Every entry that runs our command is dropped, so a moved tool replaces its old path, and ours is
@@ -410,7 +413,7 @@ def merge_session_start_hook(data: dict, hook_command: str) -> None:
     if not isinstance(hooks, dict):
         hooks = {}
     groups = hooks.get("SessionStart")
-    kept: list = []
+    kept: list[Any] = []
     for group in groups if isinstance(groups, list) else []:
         if isinstance(group, dict) and isinstance(group.get("hooks"), list):
             inner = [hook for hook in group["hooks"] if not is_session_start_hook(hook)]
@@ -435,10 +438,10 @@ class SharedPatches:
     session_start_hook: str | None = None
     # enabledPlugins and extraKnownMarketplaces of source_dir's settings.json; a key absent there is
     # absent here. None when that file cannot be read, which leaves the profiles' keys alone.
-    source_plugin_keys: dict | None = None
+    source_plugin_keys: dict[str, Any] | None = None
 
 
-def apply_plugin_keys(data: dict, profile_config: dict, source_plugin_keys: dict) -> None:
+def apply_plugin_keys(data: dict[str, Any], profile_config: dict[str, Any], source_plugin_keys: dict[str, Any]) -> None:
     """Copy the two plugin keys whole from source_dir's settings.json, then apply the profile's overrides.
 
     plugins/ is shared through a symlink, so what is installed is global, but Claude Code loads a
@@ -455,7 +458,7 @@ def apply_plugin_keys(data: dict, profile_config: dict, source_plugin_keys: dict
         data["enabledPlugins"] = {**(enabled if isinstance(enabled, dict) else {}), **overrides}
 
 
-def apply_profile_patches(data: dict, profile_config: dict, shared: SharedPatches | None) -> None:
+def apply_profile_patches(data: dict[str, Any], profile_config: dict[str, Any], shared: SharedPatches | None) -> None:
     """Apply the config-driven changes of a profile's settings.json, shared by the install and the divergence check."""
     shared = shared or SharedPatches()
     if (attribution := profile_config.get("attribution")) is not None:
@@ -473,7 +476,7 @@ def apply_profile_patches(data: dict, profile_config: dict, shared: SharedPatche
 def patch_settings_json(
     profile_name: str,
     profile_dir: Path,
-    profile_config: dict,
+    profile_config: dict[str, Any],
     shared: SharedPatches | None = None,
     backup: ProfileBackup | None = None,
 ) -> None:
@@ -583,7 +586,9 @@ def cleanup_stale_scripts(bin_dir: Path, active_script_names: set[str]) -> None:
             print(f"  removed stale script {entry}")
 
 
-def build_expected_settings(source_path: Path, profile_config: dict, shared: SharedPatches | None = None) -> str | None:
+def build_expected_settings(
+    source_path: Path, profile_config: dict[str, Any], shared: SharedPatches | None = None
+) -> str | None:
     """Build what a profile's settings.json should look like after patching.
 
     Applies config-driven patches (like attribution) to the source content,
@@ -605,7 +610,7 @@ def build_expected_settings(source_path: Path, profile_config: dict, shared: Sha
 
 
 def collect_diverged_files(
-    config: dict,
+    config: dict[str, Any],
     profiles_base: Path,
     source_dir: Path,
     shared: SharedPatches | None = None,
@@ -654,7 +659,7 @@ def collect_diverged_files(
     return diverged
 
 
-class SectionOutput(contextlib.AbstractContextManager):
+class SectionOutput(contextlib.AbstractContextManager["SectionOutput"]):
     """Pass stdout through and remember whether a section printed anything, for the "nothing changed" line."""
 
     def __init__(self) -> None:

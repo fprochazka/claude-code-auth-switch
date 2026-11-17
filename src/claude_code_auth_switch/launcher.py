@@ -49,7 +49,10 @@ CLEARED_ENV_PREFIXES = ("CLAUDE_", "ANTHROPIC_")
 ROLE_ENV = "FP_CC_AUTH_SWITCH_ROLE"
 ROLE_PROMPT_ENV = "FP_CC_AUTH_SWITCH_ROLE_PROMPT"
 ROLE_PROMPT_MODE_ENV = "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE"
-ROLE_ENV_VARS = (ROLE_ENV, ROLE_PROMPT_ENV, ROLE_PROMPT_MODE_ENV)
+# The names of the variables that the role's env: set, comma-separated. The next launch from inside
+# the session clears them, so a worker started from a dispatcher's Bash does not inherit its role's env.
+ROLE_ENV_KEYS_ENV = "FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS"
+ROLE_ENV_VARS = (ROLE_ENV, ROLE_PROMPT_ENV, ROLE_PROMPT_MODE_ENV, ROLE_ENV_KEYS_ENV)
 
 # Set to 1 to get the traceback of an unexpected error in `start` instead of a one-line message.
 DEBUG_ENV = "CC_AUTH_SWITCH_DEBUG"
@@ -296,7 +299,11 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
     roles = roles or {}
     requested_role, args = take_agent_role(user_args, roles)
 
-    env = {key: value for key, value in context.environ.items() if not key.startswith(CLEARED_ENV_PREFIXES) and key not in ROLE_ENV_VARS}
+    inherited_role_keys = set(context.environ.get(ROLE_ENV_KEYS_ENV, "").split(","))
+    env = {
+        key: value for key, value in context.environ.items()
+        if not key.startswith(CLEARED_ENV_PREFIXES) and key not in ROLE_ENV_VARS and key not in inherited_role_keys
+    }
     env["CLAUDE_CONFIG_DIR"] = str(profile.config_dir)
     env["FP_CC_AUTH_SWITCH_PROFILE"] = profile.name
     env.update(profile.env)
@@ -345,6 +352,8 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
     prompt_args: list[str] = []
     if role is not None:
         env.update(role.env)
+        if role.env:
+            env[ROLE_ENV_KEYS_ENV] = ",".join(sorted(role.env))
         env[ROLE_ENV] = role.name
         if role.prompt is not None:
             if not context.is_file(role.prompt.file):

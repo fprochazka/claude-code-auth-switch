@@ -224,7 +224,7 @@ No role string that reaches the `claude` command line or the environment may con
 
 The system prompt flags are used instead of a hook by default because Claude Code moves a hook's `additionalContext` above 10,000 characters into a file and keeps only a short preview in context. The system prompt has no such limit, and it survives compaction. If you pass the matching system prompt flag yourself, yours wins: `start` drops the role's flag, sets the prompt mode to `none` so that a hook can inject the role's text, and prints a note.
 
-`start` clears the role variables that it inherits, then sets them for the role it applies, see [Environment variables](#environment-variables). The role's `env` is merged over the profile's.
+`start` clears the role variables that it inherits, then sets them for the role it applies, see [Environment variables](#environment-variables). The role's `env` is merged over the profile's. `start` lists the names it set in `FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS`, and a launch from inside that session clears them first, so a worker started from a dispatcher's Bash does not inherit the dispatcher role's env. A role cannot set `CLAUDE_CONFIG_DIR` or an `FP_CC_AUTH_SWITCH_*` variable.
 
 #### Resuming a session with a role
 
@@ -411,7 +411,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | `roles.<name>.mcp_config` | `[]` | `--mcp-config`, each a JSON file path or inline JSON |
 | `roles.<name>.strict_mcp_config` | `false` | `--strict-mcp-config` |
 | `roles.<name>.agents` | | `--agents`: a mapping of agents, a JSON string, or the path of a JSON file |
-| `roles.<name>.env` | `{}` | Environment variables, merged over the profile's `env`. Names and values follow the rules of `profiles.<name>.env`. |
+| `roles.<name>.env` | `{}` | Environment variables, merged over the profile's `env`. Names and values follow the rules of `profiles.<name>.env`. `CLAUDE_CONFIG_DIR` and `FP_CC_AUTH_SWITCH_*` are refused. |
 | `roles.<name>.extra_args` | `[]` | More `claude` arguments, passed as written after the role's other flags |
 
 ### `auth-switch.secrets.yaml`
@@ -438,7 +438,7 @@ The `claude-<name>` launchers run this command with the `--config` path that `in
 
 1. Reads the config and the secrets file, and resolves the profile's `env`, `pinned_models`, `model`, `add_dirs` and `default_role`, and the `roles:` section.
 2. Removes `--agent-role` from the start of the arguments.
-3. Drops every inherited `CLAUDE_*` and `ANTHROPIC_*` variable, and the `FP_CC_AUTH_SWITCH_ROLE*` variables, so a launch from inside another Claude Code session does not inherit its account or its role. Then it sets `CLAUDE_CONFIG_DIR`, `FP_CC_AUTH_SWITCH_PROFILE` and the profile's `env`.
+3. Drops every inherited `CLAUDE_*` and `ANTHROPIC_*` variable, the `FP_CC_AUTH_SWITCH_ROLE*` variables, and the variables that `FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS` names, so a launch from inside another Claude Code session does not inherit its account or its role. Then it sets `CLAUDE_CONFIG_DIR`, `FP_CC_AUTH_SWITCH_PROFILE` and the profile's `env`.
 4. Passes the arguments through when the first one is a Claude Code subcommand such as `mcp`, `auth` or `plugin`, because subcommands reject the session options. It does the same when `-v`, `--version`, `-h` or `--help` comes before any `--`, because `claude` then prints and exits without a session.
 5. Otherwise puts its own arguments before yours, and picks the [role](#roles), also the role a [resumed session](#resuming-a-session-with-a-role) ran as, sets its `env` and the role variables, and adds `--add-dir=<dir>` for each `add_dirs` entry of the profile and the role, `--settings` with the [attribution from git config](#attribution-from-git-config), the role's `settings` and your own `--settings` merged into it, the [tmux session name](#session-names-in-tmux), the role's flags, `--system-prompt-snapshot off` when a resume switches the role, and `--model`. It adds the name, the model and the role's single-value flags only when you did not pass the same option yourself.
 6. Prints its notes to stderr, and replaces itself with `claude`.
@@ -556,6 +556,7 @@ Not supported. The launchers are bash scripts.
 | `FP_CC_AUTH_SWITCH_PROFILE` | `personal` | The active profile name — useful in [status line scripts](https://docs.anthropic.com/en/docs/claude-code/settings#status-bar) and hooks |
 | `FP_CC_AUTH_SWITCH_ROLE` | `dispatcher` | The [role](#roles) of this start. Unset when no role applies. |
 | `FP_CC_AUTH_SWITCH_ROLE_PROMPT` | `/home/you/roles/dispatcher.md` | The absolute path of the role's `prompt.file`. Unset when the role has no prompt. |
+| `FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS` | `DISPATCH_LEVEL,TEAM` | The names of the variables that the role's `env` set, comma-separated. The next launch from inside the session drops them. Unset when the role sets none. |
 | `FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE` | `append` | `append` or `replace`: the prompt is already in the system prompt. `none`: a hook should inject it. Unset when the role has no prompt. |
 
 The `FP_CC_AUTH_SWITCH_PROFILE` variable is intentionally outside the `CLAUDE_*`/`ANTHROPIC_*` namespace so a nested launch does not drop it together with the inherited `CLAUDE_*`/`ANTHROPIC_*` variables. You can use it in your `statusLine` command to display which profile is active:
@@ -567,7 +568,7 @@ if [ -n "${FP_CC_AUTH_SWITCH_PROFILE:-}" ]; then
 fi
 ```
 
-`start` always clears the three role variables before it sets them, so a launcher run from another session's Bash does not inherit that session's role. Hooks should read these variables to learn the role of the current start: Claude Code does not order `SessionStart` hooks from different sources, so another hook may run before the [profile start log](#profile-start-log) has the line for this start. The start log is the place to read a session's role afterwards, as a resume does. Without a launcher, you can set the variables by hand before you run `claude`.
+`start` always clears the role variables before it sets them, so a launcher run from another session's Bash does not inherit that session's role. Hooks should read these variables to learn the role of the current start: Claude Code does not order `SessionStart` hooks from different sources, so another hook may run before the [profile start log](#profile-start-log) has the line for this start. The start log is the place to read a session's role afterwards, as a resume does. Without a launcher, you can set the variables by hand before you run `claude`.
 
 ## Limitations
 

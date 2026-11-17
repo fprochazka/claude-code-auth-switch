@@ -137,6 +137,8 @@ def resolve_role(name: str, role_config: object) -> Role:
     for key, value in env.items():
         if not isinstance(key, str) or not ENV_NAME.fullmatch(key):
             raise error(f"env variable name {key!r} is not a valid shell variable name (letters, digits and _, not starting with a digit)")
+        if key == "CLAUDE_CONFIG_DIR" or key.startswith("FP_CC_AUTH_SWITCH_"):
+            raise error(f"env variable '{key}' is reserved: the profile selects the config dir, and start sets the FP_CC_AUTH_SWITCH_* variables")
         if isinstance(value, bool) or not isinstance(value, (str, int, float)):
             raise error(f"env variable '{key}' must have a string or number value")
         if "\0" in str(value):

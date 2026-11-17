@@ -106,6 +106,8 @@ def test_prompt_mode_defaults_to_append_and_expands_home(monkeypatch):
     ({"prompt": {"file": "/r\0.md"}}, "role 'r': 'prompt.file' contains a NUL character"),
     ({"env": {"A-B": "1"}}, "role 'r': env variable name 'A-B' is not a valid shell variable name"),
     ({"env": {"A": "x\0"}}, "role 'r': env value of 'A' contains a NUL character"),
+    ({"env": {"CLAUDE_CONFIG_DIR": "/x"}}, "role 'r': env variable 'CLAUDE_CONFIG_DIR' is reserved"),
+    ({"env": {"FP_CC_AUTH_SWITCH_PROFILE": "x"}}, "role 'r': env variable 'FP_CC_AUTH_SWITCH_PROFILE' is reserved"),
 ])
 def test_invalid_role_names_the_role_and_the_key(role_config, message):
     with pytest.raises(ConfigError, match=message.replace("(", r"\(")):
@@ -186,6 +188,16 @@ def test_a_users_own_prompt_flag_wins_and_the_hooks_get_mode_none():
     assert "--system-prompt-file" not in launch.argv
     assert launch.env["FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE"] == "none"
     assert "replaces the prompt of role 'worker'" in launch.notes[0]
+
+
+def test_role_env_keys_are_exported_and_cleared_on_the_next_launch():
+    dispatcher = build_launch(PROFILE, ["--agent-role", "dispatcher"], context({"PATH": "/bin"}), ROLES).env
+    assert dispatcher["FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS"] == "NUMBER,ROLE_ONLY,SHARED"
+
+    # A launch from the dispatcher's Bash: its role's env is gone, the profile's own SHARED wins anyway.
+    for args in ([], ["--agent-role", "worker"], ["mcp", "list"]):
+        nested = build_launch(PROFILE, args, context(dispatcher), ROLES).env
+        assert ("ROLE_ONLY" in nested, "NUMBER" in nested, nested["SHARED"], "FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS" in nested, nested["PATH"]) == (False, False, "profile", False, "/bin"), args
 
 
 def test_inherited_role_variables_are_cleared_without_a_role():

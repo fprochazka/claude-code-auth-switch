@@ -214,7 +214,7 @@ Every key maps to one `claude` flag, see the [configuration reference](#auth-swi
 - A single-value flag that you pass yourself, such as `--model`, `--effort` or `--permission-mode`, replaces the role's value. Your `--model` also drops the profile's `model`.
 - List flags add up: the role's `--allowed-tools`, `--add-dir` and the others come next to the profile's and yours. `start` passes each list item as `--flag=value`, because Claude Code's option parser lets `--flag value` take the following words too, including your prompt.
 - The role's `settings`, the [git config attribution](#attribution-from-git-config) and your own `--settings` are deep-merged into one `--settings` JSON, the role over the attribution and yours over both. Lists inside settings, such as `permissions.allow`, are concatenated.
-- `extra_args` go in as written, after the role's other flags and before yours, for any `claude` flag that the role keys do not cover. Write a list option there as `--flag=value`, for the reason above. The config check refuses `extra_args` whose last option is a list option written as `--flag value`, such as `--add-dir /a`, because it would take your arguments too. The list options of Claude Code 2.1.325 are `--add-dir`, `--allowed-tools`, `--betas`, `--disallowed-tools`, `--file`, `--mcp-config` and `--tools`.
+- `extra_args` go in as written, after the role's other flags and before yours, for any `claude` flag that the role keys do not cover. Because your arguments follow right after them, every item must be an option that cannot take your first word as its value: an option without a value, such as `--verbose`, or a long option with its value in the same item, `--flag=value`, such as `--add-dir=/a` or `--debug=api`. The config check refuses a separate value item, an option that takes a value written without `=`, and an unknown option without `=`, naming the role and the item. Which options take no value comes from the option table of Claude Code 2.1.325, see [`cc-auth-switch start`](#cc-auth-switch-start-profile). A hidden option with a value, such as `--max-turns=3`, works in the `=` form.
 
 No role string that reaches the `claude` command line or the environment may contain a NUL character. `prompt.file` must be an absolute path (`~` is expanded). When the file does not exist, `start` stops with the path instead of starting without the role. `prompt.mode` decides how the text gets into the session:
 
@@ -417,7 +417,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | `roles.<name>.strict_mcp_config` | `false` | `--strict-mcp-config` |
 | `roles.<name>.agents` | | `--agents`: a mapping of agents, a JSON string, or the path of a JSON file |
 | `roles.<name>.env` | `{}` | Environment variables, merged over the profile's `env`. Names and values follow the rules of `profiles.<name>.env`. `CLAUDE_CONFIG_DIR` and `FP_CC_AUTH_SWITCH_*` are refused. |
-| `roles.<name>.extra_args` | `[]` | More `claude` arguments, passed as written after the role's other flags |
+| `roles.<name>.extra_args` | `[]` | More `claude` options, passed as written after the role's other flags. Each item is an option without a value or `--flag=value`. |
 
 ### `auth-switch.secrets.yaml`
 

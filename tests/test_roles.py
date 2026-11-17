@@ -64,8 +64,9 @@ def test_every_key_of_the_plan_example_resolves():
     assert role.env == {"ROLE_ONLY": "1", "SHARED": "role", "NUMBER": "3"}
 
 
-def test_extra_args_may_hold_list_options_followed_by_another_option_or_in_equals_form():
-    assert roles(r={"extra_args": ["--add-dir", "/a", "--verbose", "--betas=x"]})["r"].extra_args == ("--add-dir", "/a", "--verbose", "--betas=x")
+def test_extra_args_may_hold_boolean_options_and_long_options_with_equals():
+    extra_args = ["--verbose", "-c", "--add-dir=/a", "--debug=api", "--max-turns=3", "--model="]
+    assert roles(r={"extra_args": extra_args})["r"].extra_args == tuple(extra_args)
 
 
 def test_empty_role_and_missing_section_resolve():
@@ -85,8 +86,13 @@ def test_prompt_mode_defaults_to_append_and_expands_home(monkeypatch):
     ({"model": 3}, "role 'r': 'model' must be a non-empty string"),
     ({"tools": "Bash"}, "role 'r': 'tools' must be a list of non-empty strings"),
     ({"extra_args": ["--x", 1]}, "role 'r': 'extra_args' must be a list"),
-    ({"extra_args": ["--verbose", "--add-dir", "/a", "/b"]}, "role 'r': 'extra_args' ends with the list option --add-dir, which would also take the arguments after it"),
-    ({"extra_args": ["--allowedTools"]}, "role 'r': 'extra_args' ends with the list option --allowedTools"),
+    ({"extra_args": ["--add-dir", "/a"]}, "role 'r': 'extra_args' item '--add-dir' takes a value; write it as --add-dir=<value>"),
+    ({"extra_args": ["--debug"]}, "role 'r': 'extra_args' item '--debug' takes a value; write it as --debug=<value>"),
+    ({"extra_args": ["-r"]}, "role 'r': 'extra_args' item '-r' takes a value; write it as --resume=<value>"),
+    ({"extra_args": ["--allowedTools"]}, "role 'r': 'extra_args' item '--allowedTools' takes a value; write it as --allowed-tools=<value>"),
+    ({"extra_args": ["opus"]}, "role 'r': 'extra_args' item 'opus' is not an option"),
+    ({"extra_args": ["--max-turns"]}, "role 'r': 'extra_args' item '--max-turns' is not an option without a value in Claude Code 2.1.325"),
+    ({"extra_args": ["-n=x"]}, "role 'r': 'extra_args' item '-n=x' takes a value; write it as --name=<value>"),
     ({"strict_mcp_config": "yes"}, "role 'r': 'strict_mcp_config' must be true or false"),
     ({"autocompact": True}, "role 'r': 'autocompact' must be a number of tokens or 'auto'"),
     ({"settings": ["x"]}, "role 'r': 'settings' must be a mapping"),

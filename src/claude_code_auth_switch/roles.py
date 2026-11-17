@@ -12,6 +12,7 @@ import json
 import os
 from dataclasses import dataclass, field
 
+from claude_code_auth_switch.claude_options import BOOLEAN, CANONICAL, CLAUDE_VERSION, KIND
 from claude_code_auth_switch.config import ENV_NAME, ConfigError
 
 # `--agent-role none` starts without a role, also when the profile has a default_role.
@@ -20,11 +21,6 @@ PROMPT_MODES = ("append", "replace", "none")
 
 STRING_KEYS = ("description", "model", "effort", "permission_mode")
 LIST_KEYS = ("tools", "allowed_tools", "disallowed_tools", "add_dirs", "plugin_dirs", "mcp_config", "extra_args")
-# Options that `claude --help` (2.1.325) shows as `<values...>`. Written as `--flag value`, such an
-# option also takes the words after it as values; start puts the user's arguments right after extra_args.
-VARIADIC_FLAGS = frozenset({
-    "--add-dir", "--allowed-tools", "--allowedTools", "--betas", "--disallowed-tools", "--disallowedTools", "--file", "--mcp-config", "--tools",
-})
 KNOWN_KEYS = frozenset((*STRING_KEYS, *LIST_KEYS, "prompt", "autocompact", "settings", "strict_mcp_config", "agents", "env"))
 
 
@@ -145,13 +141,31 @@ def resolve_role(name: str, role_config: object) -> Role:
             raise error(f"env value of '{key}' contains a NUL character")
     values["env"] = {key: str(value) for key, value in env.items()}
 
-    options = [arg for arg in values["extra_args"] if arg.startswith("-")]
-    if options and options[-1] in VARIADIC_FLAGS:
-        flag = options[-1]
-        raise error(f"'extra_args' ends with the list option {flag}, which would also take the arguments after it, the user's prompt included; write each value as {flag}=<value>")
+    for item in values["extra_args"]:
+        if reason := extra_arg_problem(item):
+            raise error(f"'extra_args' item {item!r} {reason}")
 
     values["prompt"] = resolve_prompt(role_config.get("prompt"), error)
     return Role(name=name, **values)
+
+
+def extra_arg_problem(item: str) -> str | None:
+    """Tell why an extra_args item could take the user's arguments as its value, or None when it cannot.
+
+    start puts the user's arguments right after extra_args, so a value in its own item, or an option that
+    takes a value written without "=", would make claude read the user's first word as a value.
+    """
+    name, has_value, _ = item.partition("=")
+    if item.startswith("--") and has_value and len(name) > 2:
+        return None
+    if KIND.get(item) == BOOLEAN:
+        return None
+    if not item.startswith("-"):
+        return "is not an option; write a value into its option as --flag=value"
+    option = item if item in KIND else item[:2] if not item.startswith("--") and KIND.get(item[:2], BOOLEAN) != BOOLEAN else None
+    if option is not None:
+        return f"takes a value; write it as {CANONICAL[option]}=<value>"
+    return f"is not an option without a value in Claude Code {CLAUDE_VERSION}; write an option that takes a value as --flag=value"
 
 
 def resolve_prompt(prompt: object, error) -> RolePrompt | None:

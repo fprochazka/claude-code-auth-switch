@@ -86,7 +86,7 @@ roles:
     strict_mcp_config: false           # --strict-mcp-config
     agents: null                       # --agents: a mapping, a JSON string or a file path
     env: {}                            # merged over the profile's env
-    extra_args: []                     # any other claude arguments, as written; list options as --flag=value
+    extra_args: []                     # any other claude options: --flag without a value, or --flag=value
 
   worker:
     prompt: { file: /home/you/devel/claude-code-plugins/plugins/agent-roles/roles/worker.md, mode: append }

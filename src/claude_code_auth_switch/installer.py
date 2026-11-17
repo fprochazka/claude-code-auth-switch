@@ -488,7 +488,8 @@ def generate_launcher_script(profile_name: str, description: str, tool_command: 
     return "\n".join([
         "#!/usr/bin/env bash",
         MARKER,
-        f"# Profile: {profile_name} — {description}",
+        # A newline in the description would end the comment and run the rest as a command.
+        f"# Profile: {profile_name} — {' '.join(str(description).splitlines())}",
         f'exec {command} "$@"',
     ]) + "\n"
 

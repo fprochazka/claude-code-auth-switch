@@ -213,3 +213,14 @@ def test_debug_variable_lets_the_traceback_through(work_config, monkeypatch):
 
     with pytest.raises(RuntimeError, match="something broke"):
         launcher.main(["--config", str(work_config), "work"])
+
+
+def test_launcher_keeps_a_multiline_description_in_its_comment():
+    script = generate_launcher_script("work", "first line\ntouch /tmp/pwned\r\nlast", Path("/bin/cc-auth-switch"), Path("/c.yaml"))
+
+    assert script.splitlines() == [
+        "#!/usr/bin/env bash",
+        MARKER,
+        "# Profile: work — first line touch /tmp/pwned last",
+        'exec /bin/cc-auth-switch start --config /c.yaml work "$@"',
+    ]

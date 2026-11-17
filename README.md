@@ -353,7 +353,7 @@ What sharing exposes:
 
 The installer migrates a profile whose `sessions/` is a real directory while its sessions run:
 
-1. It copies every file into `~/.claude/sessions`, keeping the modification time, and keeps a newer copy that is already there.
+1. It copies every file into `~/.claude/sessions`, keeping the modification time, and keeps a newer copy that is already there. Each copy goes to a temporary file `.<name>.<random>.cc-auth-switch-tmp` and is then renamed into place. Every copy pass first deletes such files that an interrupted run left behind.
 2. It swaps the directory for the symlink in one system call: `renameat2(RENAME_EXCHANGE)` on Linux and `renamex_np(RENAME_SWAP)` on macOS. Where neither works, it renames twice in a row.
 3. It keeps the old directory as `sessions.bak-<timestamp>` in the profile directory.
 4. After 1.5 seconds it copies the files that are newer in the backup, for writes that reached the old directory just before the swap. It also copies a backup file whose content differs when the copy in `~/.claude/sessions` is still exactly what step 1 put there, whatever the modification times say. A session rewrites its record by emptying it and writing it again, and both writes can carry the same modification time, so step 1 may have copied the empty file. It repeats this once and warns when the second pass still finds something.

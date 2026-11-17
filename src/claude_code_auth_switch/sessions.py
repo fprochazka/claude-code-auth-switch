@@ -20,6 +20,7 @@ import errno
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -118,13 +119,25 @@ def fingerprint(path: Path) -> Copied | None:
     return Copied(len(data), stat_result.st_mtime_ns, hashlib.sha256(data).digest())
 
 
+TEMP_SUFFIX = ".cc-auth-switch-tmp"
+# write_copy's temp files: ".<name>.", the 8 characters that tempfile.mkstemp adds, then the suffix.
+TEMP_NAME = re.compile(r"\..+\.[a-z0-9_]{8}" + re.escape(TEMP_SUFFIX))
+
+
+def remove_leftover_temps(directory: Path) -> None:
+    """Delete the temp files of a pass that was killed between writing and renaming."""
+    for entry in os.scandir(directory):
+        if TEMP_NAME.fullmatch(entry.name) and entry.is_file(follow_symlinks=False):
+            Path(entry.path).unlink(missing_ok=True)
+
+
 def write_copy(target: Path, data: bytes, source_stat: os.stat_result) -> Copied:
     """Put data into target with the source's mode and mtime, through a temp file and a rename.
 
     The result describes exactly the bytes and the mtime written, even when a session rewrites
     target right after the rename.
     """
-    fd, temp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".cc-auth-switch-tmp", dir=target.parent)
+    fd, temp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=TEMP_SUFFIX, dir=target.parent)
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
@@ -148,12 +161,16 @@ def copy_newer(source_dir: Path, target_dir: Path, names: set[str] | None = None
     the same mtime. A target written from another source directory is compared by mtime, so with
     several backups the newest file wins in any order. Every file written is added to `copied`.
 
-    A file that disappears while copying belongs to a session that just ended, so it is skipped.
+    A file that disappears while copying belongs to a session that just ended, so it is skipped. Temp
+    files that a killed pass left in target_dir are deleted first, and never copied from source_dir.
     """
+    remove_leftover_temps(target_dir)
     written: list[str] = []
     source_id = os.stat(source_dir)
     for entry in os.scandir(source_dir):
         if names is not None and entry.name not in names:
+            continue
+        if TEMP_NAME.fullmatch(entry.name):
             continue
         try:
             if not entry.is_file(follow_symlinks=False):

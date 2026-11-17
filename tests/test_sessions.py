@@ -252,6 +252,24 @@ def test_copies_leave_no_temp_files(old_and_shared):
     assert (shared / "1.json").stat().st_mode & 0o777 == 0o600
 
 
+
+def test_a_pass_deletes_temp_files_of_a_killed_pass_and_never_copies_them(old_and_shared):
+    old, shared = old_and_shared
+    set_file(old / "1.json", "a", MTIME)
+    leftover = shared / ".1.json.k3x_9q2z.cc-auth-switch-tmp"
+    leftover.write_text("half")
+    in_source = old / ".2.json.abcd1234.cc-auth-switch-tmp"
+    in_source.write_text("half")
+    not_ours = [".1.json.ABCD1234.cc-auth-switch-tmp", ".1.json.abc.cc-auth-switch-tmp", "1.json.abcd1234.cc-auth-switch-tmp", ".1.json.abcd1234.cc-auth-switch-tmp.bak"]
+    for name in not_ours:
+        (shared / name).write_text("keep")
+
+    assert sessions.copy_newer(old, shared, copied={}) == ["1.json"]
+
+    assert sorted(p.name for p in shared.iterdir()) == sorted(["1.json", *not_ours])
+    assert in_source.exists()
+
+
 # Rollback
 
 

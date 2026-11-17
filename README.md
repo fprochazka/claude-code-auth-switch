@@ -162,7 +162,7 @@ profiles:
       - ~/devel/shared-libs
 ```
 
-This replaces manual aliases like `alias claude-work='claude --add-dir ~/devel/projects/company'`.
+This replaces manual aliases like `alias claude-work='claude --add-dir ~/devel/projects/company'`. `start` passes each directory as `--add-dir=<dir>` before your own arguments. With `--add-dir <dir>`, Claude Code would also take the words after the directory as more directories, your prompt included.
 
 ### Pinned model versions
 
@@ -214,7 +214,7 @@ Every key maps to one `claude` flag, see the [configuration reference](#auth-swi
 - A single-value flag that you pass yourself, such as `--model`, `--effort` or `--permission-mode`, replaces the role's value. Your `--model` also drops the profile's `model`.
 - List flags add up: the role's `--allowed-tools`, `--add-dir` and the others come next to the profile's and yours. `start` passes each list item as `--flag=value`, because Claude Code's option parser lets `--flag value` take the following words too, including your prompt.
 - The role's `settings`, the [git config attribution](#attribution-from-git-config) and your own `--settings` are deep-merged into one `--settings` JSON, the role over the attribution and yours over both. Lists inside settings, such as `permissions.allow`, are concatenated.
-- `extra_args` go in as written, after the role's other flags and before yours, for any `claude` flag that the role keys do not cover. Write a list option there as `--flag=value`, for the reason above.
+- `extra_args` go in as written, after the role's other flags and before yours, for any `claude` flag that the role keys do not cover. Write a list option there as `--flag=value`, for the reason above. The config check refuses `extra_args` whose last option is a list option written as `--flag value`, such as `--add-dir /a`, because it would take your arguments too. The list options of Claude Code 2.1.325 are `--add-dir`, `--allowed-tools`, `--betas`, `--disallowed-tools`, `--file`, `--mcp-config` and `--tools`.
 
 No role string that reaches the `claude` command line or the environment may contain a NUL character. `prompt.file` must be an absolute path (`~` is expanded). When the file does not exist, `start` stops with the path instead of starting without the role. `prompt.mode` decides how the text gets into the session:
 
@@ -440,7 +440,7 @@ The `claude-<name>` launchers run this command with the `--config` path that `in
 2. Removes `--agent-role` from the start of the arguments.
 3. Drops every inherited `CLAUDE_*` and `ANTHROPIC_*` variable, and the `FP_CC_AUTH_SWITCH_ROLE*` variables, so a launch from inside another Claude Code session does not inherit its account or its role. Then it sets `CLAUDE_CONFIG_DIR`, `FP_CC_AUTH_SWITCH_PROFILE` and the profile's `env`.
 4. Passes the arguments through when the first one is a Claude Code subcommand such as `mcp`, `auth` or `plugin`, because subcommands reject the session options. It does the same when `-v`, `--version`, `-h` or `--help` comes before any `--`, because `claude` then prints and exits without a session.
-5. Otherwise picks the [role](#roles), also the role a [resumed session](#resuming-a-session-with-a-role) ran as, sets its `env` and the role variables, and adds `--add-dir` for each `add_dirs` entry of the profile and the role, `--settings` with the [attribution from git config](#attribution-from-git-config), the role's `settings` and your own `--settings` merged into it, the [tmux session name](#session-names-in-tmux), the role's flags, `--system-prompt-snapshot off` when a resume switches the role, and `--model`. It adds the name, the model and the role's single-value flags only when you did not pass the same option yourself.
+5. Otherwise puts its own arguments before yours, and picks the [role](#roles), also the role a [resumed session](#resuming-a-session-with-a-role) ran as, sets its `env` and the role variables, and adds `--add-dir=<dir>` for each `add_dirs` entry of the profile and the role, `--settings` with the [attribution from git config](#attribution-from-git-config), the role's `settings` and your own `--settings` merged into it, the [tmux session name](#session-names-in-tmux), the role's flags, `--system-prompt-snapshot off` when a resume switches the role, and `--model`. It adds the name, the model and the role's single-value flags only when you did not pass the same option yourself.
 6. Prints its notes to stderr, and replaces itself with `claude`.
 
 A config that is missing, cannot be parsed, or fails validation stops the launch. So does a profile that the config no longer defines, a secrets file that is invalid, unreadable or not ignored by git, an unknown `--agent-role`, a role whose prompt file does not exist, and a `--settings` file that `start` cannot read. `start` then prints the config path and the error and exits with a non-zero status, without starting Claude. Any other error in `start` also stops the launch, with one line that names the profile, the config path and the error. Fix the config and launch again; a reinstall is only needed for the settings that `install` writes into the profile directory.

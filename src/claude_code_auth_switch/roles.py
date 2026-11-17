@@ -20,6 +20,11 @@ PROMPT_MODES = ("append", "replace", "none")
 
 STRING_KEYS = ("description", "model", "effort", "permission_mode")
 LIST_KEYS = ("tools", "allowed_tools", "disallowed_tools", "add_dirs", "plugin_dirs", "mcp_config", "extra_args")
+# Options that `claude --help` (2.1.325) shows as `<values...>`. Written as `--flag value`, such an
+# option also takes the words after it as values; start puts the user's arguments right after extra_args.
+VARIADIC_FLAGS = frozenset({
+    "--add-dir", "--allowed-tools", "--allowedTools", "--betas", "--disallowed-tools", "--disallowedTools", "--file", "--mcp-config", "--tools",
+})
 KNOWN_KEYS = frozenset((*STRING_KEYS, *LIST_KEYS, "prompt", "autocompact", "settings", "strict_mcp_config", "agents", "env"))
 
 
@@ -137,6 +142,11 @@ def resolve_role(name: str, role_config: object) -> Role:
         if "\0" in str(value):
             raise error(f"env value of '{key}' contains a NUL character")
     values["env"] = {key: str(value) for key, value in env.items()}
+
+    options = [arg for arg in values["extra_args"] if arg.startswith("-")]
+    if options and options[-1] in VARIADIC_FLAGS:
+        flag = options[-1]
+        raise error(f"'extra_args' ends with the list option {flag}, which would also take the arguments after it, the user's prompt included; write each value as {flag}=<value>")
 
     values["prompt"] = resolve_prompt(role_config.get("prompt"), error)
     return Role(name=name, **values)

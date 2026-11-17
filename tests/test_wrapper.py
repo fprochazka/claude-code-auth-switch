@@ -252,7 +252,7 @@ def test_config_changes_apply_without_reinstalling(installed, sandbox):
     config = sandbox.home / "auth-switch.yaml"
     config.write_text(config.read_text().replace("model: sonnet", "model: opus"))
 
-    assert json.loads(run_wrapper(bin_dir, env, "modeled", sandbox.home, "-p", "x").stdout)[-2:] == ["--model", "opus"]
+    assert json.loads(run_wrapper(bin_dir, env, "modeled", sandbox.home, "-p", "x").stdout)[-4:] == ["--model", "opus", "-p", "x"]
 
 
 def test_install_fails_when_the_helper_is_not_on_path(installed, sandbox):
@@ -400,7 +400,7 @@ def test_start_accepts_config_with_equals_sign(installed, sandbox):
     result = run_start(sandbox, env, sandbox.home, f"--config={sandbox.home / 'auth-switch.yaml'}", "modeled", "-p", "x")
 
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)[-2:] == ["--model", "sonnet"]
+    assert json.loads(result.stdout)[-4:] == ["--model", "sonnet", "-p", "x"]
 
 
 def test_start_reads_a_relative_config_and_its_secrets_from_the_current_directory(installed, sandbox):

@@ -363,9 +363,8 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
             env[ROLE_PROMPT_MODE_ENV] = mode
 
     model = role.model if role is not None and role.model else profile.model
+    model_args = ["--model", model] if model and not has_flag(args, "--model", with_value=["--model"]) else []
     passed_args = list(args)
-    if model and not has_flag(args, "--model", with_value=["--model"]):
-        passed_args += ["--model", model]
 
     # Claude Code keeps only the last --settings flag instead of merging them, so start passes one
     # --settings with every layer merged: the git config attribution, the role's settings, and the
@@ -386,12 +385,15 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
         if tmux_session := context.tmux_session(pane):
             name_args = ["--name", f"{tmux_session}-p{pane.removeprefix('%')}"]
 
-    add_dir_args = [arg for directory in profile.add_dirs for arg in ("--add-dir", str(directory))]
+    # Everything start adds goes before the user's arguments, which may end in a prompt or a `--`. The
+    # list options use the --flag=value form, which takes one value: `--add-dir dir` would also take
+    # the words that follow it, the user's prompt included.
+    add_dir_args = [f"--add-dir={directory}" for directory in profile.add_dirs]
     role_launch_args: list[str] = []
     if role is not None:
         add_dir_args += [f"--add-dir={directory}" for directory in role.add_dirs]
         role_launch_args = [*role_args(role, args), *prompt_args, *role.extra_args]
-    return Launch([*add_dir_args, *settings_args, *name_args, *role_launch_args, *snapshot_args, *passed_args], env, tuple(notes))
+    return Launch([*add_dir_args, *settings_args, *name_args, *role_launch_args, *snapshot_args, *model_args, *passed_args], env, tuple(notes))
 
 
 def project_dir_names(cwd: str) -> list[str]:

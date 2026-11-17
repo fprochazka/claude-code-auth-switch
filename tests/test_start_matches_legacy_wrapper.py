@@ -2,6 +2,11 @@
 
 The test installs the launchers, writes the legacy wrappers for the same config next to them, runs both
 with a fake `claude` that prints its arguments and environment, and compares the output.
+
+The arguments differ in order and form only: start puts everything it adds before the user's arguments,
+--model included, and passes add_dirs as --add-dir=DIR. The legacy wrapper appended --model after the
+user's arguments, also after a `--`, where claude reads it as prompt words, and its `--add-dir DIR` also
+took the words after it. legacy_in_start_order() rewrites a legacy argv into that order and form.
 """
 
 import json
@@ -58,7 +63,7 @@ profiles:
 # A user's --settings is left out: start merges it with the attribution, where the legacy wrapper dropped the attribution.
 ARGUMENTS = [
     [], ["-p", "hello"], ["--model", "opus"], ["--model=opus", "-p", "x"],
-    ["--resume"], ["-r", "abc"], ["--name=mine"], ["-c"], ["mcp", "list"], ["--add-dir", "/x", "-p", "two words"], ["-p", "--model"],
+    ["--resume"], ["-r", "abc"], ["--name=mine"], ["-c"], ["mcp", "list"], ["--add-dir", "/x", "-p", "two words"], ["-p", "--model"], ["--", "hello"],
 ]
 
 # Inherited variables that both must drop, replace, or pass through unchanged.
@@ -109,6 +114,24 @@ def launchers(tmp_path_factory):
     return bin_dir, legacy_bin, env, places
 
 
+def legacy_in_start_order(argv: list[str], args: list[str]) -> list[str]:
+    if argv == args:
+        return argv
+    model: list[str] = []
+    if argv[-2:-1] == ["--model"] and argv[-2 - len(args):-2] == args:
+        model, argv = argv[-2:], argv[:-2]
+    added, user = argv[: len(argv) - len(args)], argv[len(argv) - len(args):]
+    assert user == args
+    rewritten: list[str] = []
+    while added:
+        if added[0] == "--add-dir":
+            rewritten.append(f"--add-dir={added[1]}")
+            added = added[2:]
+        else:
+            rewritten.append(added.pop(0))
+    return [*rewritten, *model, *user]
+
+
 def launch(bin_dir, profile, args, cwd, env) -> dict:
     result = subprocess.run([str(bin_dir / f"claude-{profile}"), *args], cwd=cwd, env=env, capture_output=True, text=True)
     return {"returncode": result.returncode, "stderr": result.stderr, "stdout": json.loads(result.stdout)}
@@ -126,6 +149,7 @@ def test_start_launches_claude_like_the_legacy_wrapper(launchers, profile, place
         # command, and the legacy wrapper ran many commands before its exec.
         new_env, legacy_env = launched["stdout"].pop("env"), legacy["stdout"].pop("env")
         new_env.pop("_", None), legacy_env.pop("_", None)
+        legacy["stdout"]["argv"] = legacy_in_start_order(legacy["stdout"]["argv"], args)
         assert launched == legacy, args
         assert {key: (new_env.get(key), legacy_env.get(key)) for key in new_env.keys() | legacy_env.keys() if new_env.get(key) != legacy_env.get(key)} == {}, args
         assert new_env["FP_CC_AUTH_SWITCH_PROFILE"] == profile

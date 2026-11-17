@@ -64,6 +64,10 @@ def test_every_key_of_the_plan_example_resolves():
     assert role.env == {"ROLE_ONLY": "1", "SHARED": "role", "NUMBER": "3"}
 
 
+def test_extra_args_may_hold_list_options_followed_by_another_option_or_in_equals_form():
+    assert roles(r={"extra_args": ["--add-dir", "/a", "--verbose", "--betas=x"]})["r"].extra_args == ("--add-dir", "/a", "--verbose", "--betas=x")
+
+
 def test_empty_role_and_missing_section_resolve():
     assert roles(worker=None)["worker"] == Role(name="worker")
     assert resolve_roles({"profiles": {}}) == {}
@@ -81,6 +85,8 @@ def test_prompt_mode_defaults_to_append_and_expands_home(monkeypatch):
     ({"model": 3}, "role 'r': 'model' must be a non-empty string"),
     ({"tools": "Bash"}, "role 'r': 'tools' must be a list of non-empty strings"),
     ({"extra_args": ["--x", 1]}, "role 'r': 'extra_args' must be a list"),
+    ({"extra_args": ["--verbose", "--add-dir", "/a", "/b"]}, "role 'r': 'extra_args' ends with the list option --add-dir, which would also take the arguments after it"),
+    ({"extra_args": ["--allowedTools"]}, "role 'r': 'extra_args' ends with the list option --allowedTools"),
     ({"strict_mcp_config": "yes"}, "role 'r': 'strict_mcp_config' must be true or false"),
     ({"autocompact": True}, "role 'r': 'autocompact' must be a number of tokens or 'auto'"),
     ({"settings": ["x"]}, "role 'r': 'settings' must be a mapping"),
@@ -130,13 +136,13 @@ def test_role_flags_follow_the_profile_and_come_before_the_user_arguments():
     launch = build_launch(PROFILE, ["--agent-role", "dispatcher", "-p", "do it"], context(attribution={"attribution": {"pr": ""}}), ROLES)
 
     assert launch.argv == [
-        "--add-dir", "/profile dir", "--add-dir=/role dir",
+        "--add-dir=/profile dir", "--add-dir=/role dir",
         "--settings", json.dumps({"attribution": {"pr": ""}, "autoCompactEnabled": True, "permissions": {"allow": ["Read"]}}),
         "--effort", "high", "--permission-mode", "auto", "--autocompact", "250000", "--agents", json.dumps(FULL_ROLE["agents"]),
         "--tools=Bash", "--tools=Read", "--allowed-tools=Bash(git:*)", "--disallowed-tools=WebFetch",
         "--plugin-dir=/plugins/agent-roles", "--mcp-config=/mcp.json", "--strict-mcp-config",
         "--append-system-prompt-file", "/roles/dispatcher.md", "--verbose",
-        "-p", "do it", "--model", "opus",
+        "--model", "opus", "-p", "do it",
     ]
     assert launch.notes == ()
 
@@ -170,7 +176,7 @@ def test_role_env_is_merged_over_the_profile_and_role_variables_are_set():
 def test_prompt_modes(role, flag, mode):
     launch = build_launch(PROFILE, ["--agent-role", role], context(), ROLES)
 
-    assert launch.argv == ["--add-dir", "/profile dir", *flag, "--model", "sonnet"]
+    assert launch.argv == ["--add-dir=/profile dir", *flag, "--model", "sonnet"]
     assert [launch.env[key] for key in ROLE_ENV] == [role, "/roles/worker.md", mode]
 
 
@@ -206,7 +212,7 @@ def test_agent_role_never_reaches_claude_and_subcommands_get_no_role():
 
 
 def test_arguments_after_double_dash_stay_with_claude():
-    assert build_launch(PROFILE, ["--", "--agent-role", "x"], context(), ROLES).argv == ["--add-dir", "/profile dir", "--", "--agent-role", "x", "--model", "sonnet"]
+    assert build_launch(PROFILE, ["--", "--agent-role", "x"], context(), ROLES).argv == ["--add-dir=/profile dir", "--model", "sonnet", "--", "--agent-role", "x"]
 
 
 @pytest.mark.parametrize("args", [["--version"], ["-v"], ["-p", "x", "--help"], ["-h"]])
@@ -287,7 +293,7 @@ def test_launcher_applies_the_default_role(role_launch):
     result = run("-p", "hi")
 
     assert json.loads(result.stdout) == {
-        "argv": ["--append-system-prompt-file", str(prompt), "-p", "hi", "--model", "opus"],
+        "argv": ["--append-system-prompt-file", str(prompt), "--model", "opus", "-p", "hi"],
         "env": {"FP_CC_AUTH_SWITCH_PROFILE": "work", "FP_CC_AUTH_SWITCH_ROLE": "dispatcher", "FP_CC_AUTH_SWITCH_ROLE_PROMPT": str(prompt), "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": "append", "ROLE_ONLY": "1"},
     }
     assert json.loads(run("--agent-role", "none").stdout)["env"]["FP_CC_AUTH_SWITCH_ROLE"] is None
@@ -344,7 +350,7 @@ def test_resume_reapplies_the_recorded_role(args):
     launch = build_launch(PROFILE, args, ctx, ROLES)
 
     assert launch.env["FP_CC_AUTH_SWITCH_ROLE"] == "worker"
-    assert launch.argv == ["--add-dir", "/profile dir", "--system-prompt-file", "/roles/worker.md", *args, "--model", "sonnet"]
+    assert launch.argv == ["--add-dir=/profile dir", "--system-prompt-file", "/roles/worker.md", "--model", "sonnet", *args]
     assert (launch.notes, calls[0]) == ((), ("recorded", Path("/profiles/work"), SESSION, "/work"))
 
 
@@ -378,7 +384,8 @@ def test_resume_with_the_recorded_role_keeps_the_snapshot():
 def test_resume_with_another_role_turns_the_snapshot_off(agent_role, recorded, label):
     launch = build_launch(PROFILE, ["--agent-role", agent_role, "--resume", SESSION], resume_context(recorded=recorded)[0], ROLES)
 
-    assert launch.argv[launch.argv.index("--system-prompt-snapshot"):][:4] == ["--system-prompt-snapshot", "off", "--resume", SESSION]
+    assert launch.argv[launch.argv.index("--system-prompt-snapshot"):][:2] == ["--system-prompt-snapshot", "off"]
+    assert launch.argv[-2:] == ["--resume", SESSION]
     assert launch.env.get("FP_CC_AUTH_SWITCH_ROLE") == (None if agent_role == "none" else agent_role)
     assert launch.notes == (f"resuming session {SESSION}, {label}: --system-prompt-snapshot off sends the new system prompt, at the cost of prompt cache reuse for this run",)
 
@@ -484,7 +491,7 @@ def test_launcher_resume_reapplies_and_switches_the_role(role_launch, sandbox):
     reapplied = run("--resume", SESSION)
     switched = run("--agent-role", "worker", "--resume", SESSION)
 
-    assert json.loads(reapplied.stdout)["argv"] == ["--append-system-prompt-file", str(prompt), "--resume", SESSION, "--model", "opus"]
+    assert json.loads(reapplied.stdout)["argv"] == ["--append-system-prompt-file", str(prompt), "--model", "opus", "--resume", SESSION]
     assert reapplied.stderr == ""
     assert json.loads(switched.stdout) == {
         "argv": ["--system-prompt-snapshot", "off", "--resume", SESSION],

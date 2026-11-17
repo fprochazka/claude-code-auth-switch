@@ -32,7 +32,7 @@ def test_build_launch_orders_arguments_like_the_bash_wrapper():
 
     launch = build_launch(PROFILE, ["-p", "hi"], ctx)
 
-    assert launch.argv == ["--add-dir", "/repo dir", "--settings", '{"attribution": {"pr": ""}}', "--name", "sess-p7", "-p", "hi", "--model", "sonnet"]
+    assert launch.argv == ["--add-dir=/repo dir", "--settings", '{"attribution": {"pr": ""}}', "--name", "sess-p7", "--model", "sonnet", "-p", "hi"]
 
 
 def test_build_launch_clears_inherited_claude_and_anthropic_variables_and_keeps_values_literal():
@@ -55,7 +55,7 @@ def test_resume_skips_tmux():
     launch = build_launch(PROFILE, ["--resume=abc"], ctx)
 
     assert calls == [("git", "/work")]
-    assert launch.argv == ["--add-dir", "/repo dir", "--resume=abc", "--model", "sonnet"]
+    assert launch.argv == ["--add-dir=/repo dir", "--model", "sonnet", "--resume=abc"]
 
 
 def test_the_last_user_settings_is_merged_over_the_attribution_into_one_settings():
@@ -64,9 +64,9 @@ def test_the_last_user_settings_is_merged_over_the_attribution_into_one_settings
     launch = build_launch(PROFILE, ["--settings", '{"ignored": 1}', "-p", "hi", '--settings={"attribution": {"pr": "user"}, "permissions": {"allow": ["Read", "Bash"]}}'], ctx)
 
     assert launch.argv == [
-        "--add-dir", "/repo dir",
+        "--add-dir=/repo dir",
         "--settings", '{"attribution": {"commit": "git", "pr": "user"}, "permissions": {"allow": ["Read", "Bash"]}}',
-        "-p", "hi", "--model", "sonnet",
+        "--model", "sonnet", "-p", "hi",
     ]
 
 
@@ -75,7 +75,7 @@ def test_user_settings_file_is_read_relative_to_the_start_directory(tmp_path):
     ctx, _ = context(attribution={"attribution": {"pr": ""}})
     ctx = dataclasses.replace(ctx, cwd=str(tmp_path))
 
-    assert build_launch(PROFILE, ["--settings", "own.json"], ctx).argv[2:4] == ["--settings", '{"attribution": {"pr": ""}, "model": "x"}']
+    assert build_launch(PROFILE, ["--settings", "own.json"], ctx).argv[1:3] == ["--settings", '{"attribution": {"pr": ""}, "model": "x"}']
 
 
 @pytest.mark.parametrize("value, error", [("missing.json", "cannot read"), ("{not json", "not valid JSON"), ("list.json", "must hold a JSON object")])
@@ -88,7 +88,7 @@ def test_unreadable_user_settings_stops_the_launch(tmp_path, value, error):
 def test_user_settings_pass_unchanged_when_start_has_no_settings_of_its_own():
     ctx, _ = context()
 
-    assert build_launch(PROFILE, ["--settings=/s.json", "--", "--settings", "x"], ctx).argv == ["--add-dir", "/repo dir", "--settings=/s.json", "--", "--settings", "x", "--model", "sonnet"]
+    assert build_launch(PROFILE, ["--settings=/s.json", "--", "--settings", "x"], ctx).argv == ["--add-dir=/repo dir", "--model", "sonnet", "--settings=/s.json", "--", "--settings", "x"]
 
 
 def test_pop_option_stops_at_double_dash_and_leaves_a_flag_without_value():

@@ -150,6 +150,84 @@ def test_migration_loses_no_write_of_an_in_place_writer(tmp_path, trial):
     assert json.loads(record.read_text()) == {"seq": result["last"]}
 
 
+MTIME = 1_763_290_000_000_000_000
+
+
+def set_file(path: Path, content: str, mtime_ns: int) -> None:
+    path.write_text(content)
+    os.utime(path, ns=(mtime_ns, mtime_ns))
+
+
+@pytest.fixture
+def old_and_shared(tmp_path):
+    old, shared = tmp_path / "old", tmp_path / "shared"
+    old.mkdir()
+    shared.mkdir()
+    return old, shared
+
+
+def test_catch_up_copies_a_rewrite_with_the_same_mtime_when_the_shared_copy_is_still_the_migrations(old_and_shared):
+    # The first pass copied the record while it was empty, between the truncate and the write of
+    # one in-place rewrite. The write that followed carries the same mtime.
+    old, shared = old_and_shared
+    set_file(old / "4242.json", "", MTIME)
+    copied: dict = {}
+    sessions.copy_newer(old, shared, copied=copied)
+    set_file(old / "4242.json", '{"seq": 7}', MTIME)
+
+    assert sessions.copy_newer(old, shared, copied=copied) == ["4242.json"]
+    assert (shared / "4242.json").read_text() == '{"seq": 7}'
+    assert (shared / "4242.json").stat().st_mtime_ns == MTIME
+    assert sessions.copy_newer(old, shared, copied=copied) == []
+
+
+def test_catch_up_keeps_the_mtime_rule_for_a_file_without_a_record(old_and_shared):
+    old, shared = old_and_shared
+    set_file(old / "4242.json", "", MTIME)
+    sessions.copy_newer(old, shared)
+    set_file(old / "4242.json", '{"seq": 7}', MTIME)
+
+    assert sessions.copy_newer(old, shared) == []
+    assert (shared / "4242.json").read_text() == ""
+
+
+@pytest.mark.parametrize("old_mtime, expected", [(MTIME + 1, "old"), (MTIME, "session"), (MTIME - 1, "session")])
+def test_catch_up_keeps_a_shared_copy_that_a_session_wrote_unless_the_old_one_is_newer(old_and_shared, old_mtime, expected):
+    old, shared = old_and_shared
+    set_file(old / "4242.json", "first", MTIME - 10)
+    copied: dict = {}
+    sessions.copy_newer(old, shared, copied=copied)
+    set_file(shared / "4242.json", "session", MTIME)
+    set_file(old / "4242.json", "old", old_mtime)
+
+    sessions.copy_newer(old, shared, copied=copied)
+
+    assert (shared / "4242.json").read_text() == expected
+
+
+def test_first_pass_keeps_a_newer_shared_copy_and_catch_up_keeps_the_mtime_rule_for_it(old_and_shared):
+    old, shared = old_and_shared
+    set_file(old / "4242.json", "old", MTIME - 1)
+    set_file(shared / "4242.json", "shared", MTIME)
+    copied: dict = {}
+
+    assert sessions.copy_newer(old, shared, copied=copied) == []
+    set_file(old / "4242.json", "old again", MTIME)
+    assert sessions.copy_newer(old, shared, copied=copied) == []
+    assert (shared / "4242.json").read_text() == "shared"
+
+
+def test_copies_leave_no_temp_files(old_and_shared):
+    old, shared = old_and_shared
+    set_file(old / "1.json", "a", MTIME)
+    (old / "1.json").chmod(0o600)
+
+    sessions.copy_newer(old, shared, copied={})
+
+    assert [p.name for p in shared.iterdir()] == ["1.json"]
+    assert (shared / "1.json").stat().st_mode & 0o777 == 0o600
+
+
 # Rollback
 
 

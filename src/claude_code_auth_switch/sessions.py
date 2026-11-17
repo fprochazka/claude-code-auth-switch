@@ -17,10 +17,13 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import errno
+import hashlib
 import json
 import os
 import shutil
+import stat
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -79,29 +82,94 @@ def exchange(first: Path, second: Path) -> None:
         raise OSError(code, os.strerror(code), f"{first} <-> {second}")
 
 
-def copy_newer(source_dir: Path, target_dir: Path, names: set[str] | None = None) -> list[str]:
+@dataclass(frozen=True)
+class Copied:
+    """What a migration or rollback wrote into a file of the target directory."""
+
+    size: int
+    mtime_ns: int
+    digest: bytes
+
+
+def read_file(path: str | Path) -> tuple[bytes, os.stat_result]:
+    """Read a file and the stat that belongs to the bytes read."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        stat_result = os.fstat(fd)
+        chunks = []
+        while chunk := os.read(fd, 1 << 16):
+            chunks.append(chunk)
+        return b"".join(chunks), stat_result
+    finally:
+        os.close(fd)
+
+
+def fingerprint(path: Path) -> Copied | None:
+    try:
+        data, stat_result = read_file(path)
+    except (FileNotFoundError, IsADirectoryError):
+        return None
+    return Copied(len(data), stat_result.st_mtime_ns, hashlib.sha256(data).digest())
+
+
+def write_copy(target: Path, data: bytes, source_stat: os.stat_result) -> Copied:
+    """Put data into target with the source's mode and mtime, through a temp file and a rename.
+
+    The result describes exactly the bytes and the mtime written, even when a session rewrites
+    target right after the rename.
+    """
+    fd, temp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".cc-auth-switch-tmp", dir=target.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.chmod(temp, stat.S_IMODE(source_stat.st_mode))
+        os.utime(temp, ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns))
+        os.replace(temp, target)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
+    return Copied(len(data), source_stat.st_mtime_ns, hashlib.sha256(data).digest())
+
+
+def copy_newer(source_dir: Path, target_dir: Path, names: set[str] | None = None, copied: dict[str, Copied] | None = None) -> list[str]:
     """Copy regular files whose copy in target_dir is missing or older, keeping the mtime.
+
+    With `copied`, the caller's record of what earlier passes wrote into target_dir, one more case
+    copies: the target still holds exactly what an earlier pass wrote, and the source differs from it.
+    Nothing has written the target since, so the source holds the later state, whatever the mtimes
+    say. A session that empties and then rewrites its record within one timestamp tick otherwise
+    leaves an empty copy behind, because both writes carry the same mtime. Every file written is
+    added to `copied`.
 
     A file that disappears while copying belongs to a session that just ended, so it is skipped.
     """
-    copied: list[str] = []
+    written: list[str] = []
     for entry in os.scandir(source_dir):
         if names is not None and entry.name not in names:
             continue
         try:
             if not entry.is_file(follow_symlinks=False):
                 continue
-            source_mtime = entry.stat(follow_symlinks=False).st_mtime_ns
+            data, source_stat = read_file(entry.path)
+            target = target_dir / entry.name
             try:
-                if os.stat(target_dir / entry.name).st_mtime_ns >= source_mtime:
-                    continue
+                target_mtime = os.stat(target).st_mtime_ns
             except FileNotFoundError:
-                pass
-            shutil.copy2(entry.path, target_dir / entry.name)
-            copied.append(entry.name)
+                target_mtime = None
+            if target_mtime is not None:
+                ours = copied.get(entry.name) if copied is not None else None
+                if ours is not None and fingerprint(target) == ours:
+                    if hashlib.sha256(data).digest() == ours.digest:
+                        continue
+                elif target_mtime >= source_stat.st_mtime_ns:
+                    continue
+            record = write_copy(target, data, source_stat)
+            if copied is not None:
+                copied[entry.name] = record
+            written.append(entry.name)
         except FileNotFoundError:
             continue
-    return sorted(copied)
+    return sorted(written)
 
 
 def backup_path(profile_dir: Path) -> Path:
@@ -114,7 +182,7 @@ def backup_path(profile_dir: Path) -> Path:
     return candidate
 
 
-def put_in_place(staged: Path, live: Path, profile_dir: Path, target: Path) -> list[Path]:
+def put_in_place(staged: Path, live: Path, profile_dir: Path, target: Path, copied: dict[str, Copied]) -> list[Path]:
     """Replace `live` with `staged` and return where the replaced directory went.
 
     The atomic exchange leaves the old directory at `staged`, which is then renamed to a backup. The
@@ -141,7 +209,7 @@ def put_in_place(staged: Path, live: Path, profile_dir: Path, target: Path) -> l
         except OSError as error:
             if error.errno not in (errno.EISDIR, errno.ENOTEMPTY, errno.EEXIST, errno.ENOTDIR):
                 raise
-            copy_newer(live, target)
+            copy_newer(live, target, copied=copied)
     raise SessionsError(f"{live} was recreated by a running session {MAX_SWAP_ATTEMPTS} times in a row, try again")
 
 
@@ -151,16 +219,17 @@ def migrate(profile_dir: Path, target: Path, settle: float = SETTLE_SECONDS) -> 
     staged = profile_dir / SWAP_NAME
     target.mkdir(mode=0o700, parents=True, exist_ok=True)
     staged.symlink_to(target)
-    copy_newer(live, target)
-    backups = put_in_place(staged, live, profile_dir, target)
+    copied: dict[str, Copied] = {}
+    copy_newer(live, target, copied=copied)
+    backups = put_in_place(staged, live, profile_dir, target, copied)
 
     # Writes that resolved the old path just before the swap land in the backup. Wait for them, then
     # copy what is newer there; a second pass should find nothing left.
     time.sleep(settle)
     for backup in backups:
-        copy_newer(backup, target)
+        copy_newer(backup, target, copied=copied)
     time.sleep(settle)
-    late = [name for backup in backups for name in copy_newer(backup, target)]
+    late = [name for backup in backups for name in copy_newer(backup, target, copied=copied)]
     if late:
         print(f"  warning: copied late writes after the second pass: {', '.join(late)}")
     return backups
@@ -302,7 +371,7 @@ def find_owned(target: Path, profile_dir: Path, profile_name: str) -> Ownership:
     return owned
 
 
-def put_back(staged: Path, live: Path) -> None:
+def put_back(staged: Path, live: Path, copied: dict[str, Copied]) -> None:
     """Replace the `live` symlink with the real directory `staged`."""
     try:
         exchange(staged, live)
@@ -321,7 +390,7 @@ def put_back(staged: Path, live: Path) -> None:
             if error.errno not in (errno.EISDIR, errno.ENOTEMPTY, errno.EEXIST, errno.ENOTDIR):
                 raise
             # A session recreated sessions/ in the gap: keep its files and retry.
-            copy_newer(live, staged)
+            copy_newer(live, staged, copied=copied)
             shutil.rmtree(live)
     raise SessionsError(f"{live} was recreated by a running session {MAX_SWAP_ATTEMPTS} times in a row, try again")
 
@@ -337,13 +406,14 @@ def rollback(profile_name: str, profile_dir: Path, target: Path, settle: float =
 
     owned = find_owned(target, profile_dir, profile_name)
     staged.mkdir(mode=0o700)
-    copy_newer(target, staged, owned.live)
-    put_back(staged, live)
+    copied: dict[str, Copied] = {}
+    copy_newer(target, staged, owned.live, copied)
+    put_back(staged, live, copied)
 
     # Same race as the migration, in the other direction: late writes through the old symlink land
     # in the shared directory.
     time.sleep(settle)
-    copy_newer(target, live, owned.live)
+    copy_newer(target, live, owned.live, copied)
     for name in sorted(owned.live | owned.dead):
         try:
             (target / name).unlink()

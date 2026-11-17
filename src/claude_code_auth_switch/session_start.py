@@ -11,7 +11,11 @@ Tools such as cc-blackbox read that file to tell which profile owns a session, w
 see in Claude Code's own records once several profiles share one sessions/ directory. The line
 format is a contract with those readers:
 
-    {"v": 1, "ts": <epoch ms>, "session_id": ..., "pid": ..., "source": ..., "profile": ..., "config_dir": ..., "cwd": ...}
+    {"v": 1, "ts": <epoch ms>, "session_id": ..., "pid": ..., "source": ..., "profile": ..., "config_dir": ...,
+     "cwd": ..., "role": ..., "role_prompt": ..., "role_prompt_mode": ...}
+
+The role fields come from the FP_CC_AUTH_SWITCH_ROLE* variables that `start` sets; readers that know
+only the older fields ignore them, so the format stays version 1.
 
 Claude Code puts the stdout of a SessionStart hook into the model context, and shows stderr to the
 user when the exit code is not 0. The hook therefore prints nothing, always exits 0, and writes
@@ -83,6 +87,9 @@ def build_line(payload: dict, now_ms: int) -> dict:
         "profile": os.environ.get("FP_CC_AUTH_SWITCH_PROFILE") or None,
         "config_dir": os.environ.get("CLAUDE_CONFIG_DIR") or None,
         "cwd": payload.get("cwd") or os.getcwd(),
+        "role": os.environ.get("FP_CC_AUTH_SWITCH_ROLE") or None,
+        "role_prompt": os.environ.get("FP_CC_AUTH_SWITCH_ROLE_PROMPT") or None,
+        "role_prompt_mode": os.environ.get("FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE") or None,
     }
 
 

@@ -50,7 +50,20 @@ def test_hook_appends_the_contract_line(hook_env):
         "profile": "work-team",
         "config_dir": str(profile_dir),
         "cwd": "/home/user/devel/service",
+        "role": None,
+        "role_prompt": None,
+        "role_prompt_mode": None,
     }
+
+
+def test_hook_records_the_role_from_the_environment(hook_env):
+    env, payload, profile_dir, log = hook_env
+    role_env = {"FP_CC_AUTH_SWITCH_ROLE": "dispatcher", "FP_CC_AUTH_SWITCH_ROLE_PROMPT": "/roles/dispatcher.md", "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": "append"}
+
+    run_hook({**env, **role_env, "CLAUDE_PID": "4242"}, json.dumps({**payload, "source": "resume"}))
+
+    [line] = read_lines(log)
+    assert (line["v"], line["source"], line["role"], line["role_prompt"], line["role_prompt_mode"]) == (1, "resume", "dispatcher", "/roles/dispatcher.md", "append")
 
 
 def test_hook_appends_one_line_per_start(hook_env):
@@ -80,7 +93,7 @@ def test_hook_without_pid_record_or_profile_env_writes_nulls(hook_env, sandbox):
     run_hook(sandbox.env, json.dumps(payload))
 
     [line] = read_lines(log)
-    assert (line["pid"], line["profile"], line["config_dir"]) == (None, None, None)
+    assert (line["pid"], line["profile"], line["config_dir"], line["role"], line["role_prompt"], line["role_prompt_mode"]) == (None,) * 6
 
 
 def test_hook_ignores_an_empty_transcript_path(hook_env):

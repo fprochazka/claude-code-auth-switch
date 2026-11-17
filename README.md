@@ -262,13 +262,14 @@ Claude Code records nothing about the profile in a session's files. To let other
 On every start, resume, `/clear`, compaction and fork, the hook appends one line to `auth-switch-profile-starts.jsonl` in the session's directory, `projects/<project>/<session-id>/`:
 
 ```json
-{"v": 1, "ts": 1763290000000, "session_id": "<uuid>", "pid": 12345, "source": "startup", "profile": "work-team", "config_dir": "/home/you/.claude-profiles/work-team", "cwd": "/home/you/devel/projects/company/service"}
+{"v": 1, "ts": 1763290000000, "session_id": "<uuid>", "pid": 12345, "source": "startup", "profile": "work-team", "config_dir": "/home/you/.claude-profiles/work-team", "cwd": "/home/you/devel/projects/company/service", "role": "dispatcher", "role_prompt": "/home/you/devel/claude-code-plugins/plugins/agent-roles/roles/dispatcher.md", "role_prompt_mode": "append"}
 ```
 
 - `ts` is the time in epoch milliseconds.
 - `pid` is the Claude Code process, the one that writes `sessions/<pid>.json`. It is `null` when the hook cannot find it.
 - `source` is `startup`, `resume`, `clear`, `compact` or `fork`.
 - `profile` and `config_dir` come from `FP_CC_AUTH_SWITCH_PROFILE` and `CLAUDE_CONFIG_DIR`, and are `null` when a session starts without a launcher.
+- `role`, `role_prompt` and `role_prompt_mode` come from `FP_CC_AUTH_SWITCH_ROLE`, `FP_CC_AUTH_SWITCH_ROLE_PROMPT` and `FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE`, see [Environment variables](#environment-variables). Each is `null` when its variable is unset. Lines written before these fields existed lack them; read a missing field as `null`.
 
 [cc-blackbox](https://github.com/fprochazka/cc-blackbox) reads this file. Treat the format as a contract: a change needs a new `v`.
 
@@ -483,6 +484,8 @@ if [ -n "${FP_CC_AUTH_SWITCH_PROFILE:-}" ]; then
     echo "Profile: $FP_CC_AUTH_SWITCH_PROFILE"
 fi
 ```
+
+The [profile start log](#profile-start-log) also records three role variables when they are set: `FP_CC_AUTH_SWITCH_ROLE` (a role name), `FP_CC_AUTH_SWITCH_ROLE_PROMPT` (the absolute path of the role's prompt file) and `FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE` (`append`, `replace` or `none`). Set them by hand before you run `claude` to record a role for a session.
 
 ## Limitations
 

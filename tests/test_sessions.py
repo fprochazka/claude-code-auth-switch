@@ -129,7 +129,7 @@ def in_place_writer(path: Path, stop_at: float, result: dict[str, int]) -> None:
 
 
 @pytest.mark.parametrize("trial", range(20))
-def test_migration_loses_no_write_of_an_in_place_writer(tmp_path, trial):
+def test_migration_loses_no_write_of_an_in_place_writer(tmp_path, monkeypatch, trial):
     profile_dir = tmp_path / "work-team"
     live = profile_dir / "sessions"
     live.mkdir(parents=True)
@@ -142,6 +142,18 @@ def test_migration_loses_no_write_of_an_in_place_writer(tmp_path, trial):
     # The writer's last write falls somewhere around the swap, then it stays idle like an idle session.
     stop_at = time.monotonic() + random.Random(trial).uniform(0, 0.004)
     writer = threading.Thread(target=in_place_writer, args=(record, stop_at, result))
+    sleep = time.sleep
+
+    def settle(seconds: float) -> None:
+        # The migration catches a write that resolved the old path before the swap only when the write
+        # finishes within the pauses before the catch-up passes. On ext4, an open() with O_TRUNC was seen
+        # to truncate the file and then not return for 78 ms, longer than a pause short enough for a test,
+        # so the write landed in the backup after the last pass. Each pause therefore also waits until
+        # the writer is done, as the 1.5 seconds of a real migration are meant to.
+        sleep(seconds)
+        writer.join()
+
+    monkeypatch.setattr(time, "sleep", settle)
 
     writer.start()
     sessions.migrate(profile_dir, target, settle=0.05)

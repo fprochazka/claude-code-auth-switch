@@ -108,9 +108,16 @@ def test_user_settings_pass_unchanged_when_start_has_no_settings_of_its_own():
     assert build_launch(PROFILE, ["--settings=/s.json", "--", "--settings", "x"], ctx).argv == ["--add-dir=/repo dir", "--model", "sonnet", "--settings=/s.json", "--", "--settings", "x"]
 
 
-def test_pop_option_stops_at_double_dash_and_leaves_a_flag_without_value():
-    assert launcher.pop_option(["--a", "1", "--a=2", "--", "--a", "3"], "--a") == (["1", "2"], ["--", "--a", "3"])
-    assert launcher.pop_option(["-p", "--a"], "--a") == ([], ["-p", "--a"])
+def test_an_option_value_is_never_read_as_the_option_it_looks_like():
+    # -p is --print, a flag without a value, so in `-p --model x` the --model is the user's own.
+    assert build_launch(PROFILE, ["-p", "--model", "x"], context()[0]).argv == ["--add-dir=/repo dir", "-p", "--model", "x"]
+    assert build_launch(PROFILE, ["--name", "--model"], context()[0]).argv == ["--add-dir=/repo dir", "--model", "sonnet", "--name", "--model"]
+
+
+def test_a_settings_flag_without_a_value_stays_for_claude_to_report():
+    ctx, _ = context(attribution={"attribution": {"pr": ""}})
+
+    assert build_launch(PROFILE, ["-p", "--settings"], ctx).argv[-2:] == ["-p", "--settings"]
 
 
 def test_subcommand_gets_only_the_environment():

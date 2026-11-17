@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from claude_code_auth_switch.claude_options import has_option, remove_option, scan
 from claude_code_auth_switch.config import ENV_NAME, ConfigError
 from claude_code_auth_switch.roles import NO_ROLE, Role, resolve_roles
 
@@ -34,8 +35,7 @@ SUBCOMMANDS = frozenset({
 
 # A name given at launch replaces the saved title of a resumed session, /rename included, so the tmux
 # name is left out when the user names the session or resumes one.
-NAME_SKIP_FLAGS = ("-n", "--name", "-r", "--resume", "-c", "--continue", "--session-id", "--fork-session", "--from-pr")
-NAME_SKIP_FLAGS_WITH_VALUE = ("--name", "--resume", "--session-id", "--from-pr")
+NAME_SKIP_OPTIONS = ("--name", "--resume", "--continue", "--session-id", "--fork-session", "--from-pr")
 
 # A tmux server that does not answer costs the session name, never the launch.
 TMUX_TIMEOUT_SECONDS = 2
@@ -61,7 +61,7 @@ AGENT_ROLE_FLAG = "--agent-role"
 
 # With one of these, claude prints and exits without a session, so start passes the arguments through
 # as for a subcommand: no role, no prompt file check, no session name.
-PASSTHROUGH_FLAGS = frozenset({"-v", "--version", "-h", "--help"})
+PASSTHROUGH_OPTIONS = ("--version", "--help")
 
 # The system prompt flag of each prompt mode, and the user flags that replace it.
 PROMPT_FLAGS = {
@@ -124,39 +124,6 @@ class Launch:
     notes: tuple[str, ...] = ()
 
 
-def has_flag(args: Sequence[str], *flags: str, with_value: Sequence[str] = ()) -> bool:
-    """Tell whether any argument is one of flags, or --flag=value for a flag in with_value.
-
-    Every argument is checked, also one that is the value of another option, as the bash wrappers did.
-    """
-    return any(arg in flags or any(arg.startswith(f"{flag}=") for flag in with_value) for arg in args)
-
-
-def pop_option(args: Sequence[str], flag: str) -> tuple[list[str], list[str]]:
-    """Remove every `flag value` and `flag=value` before a `--` from args. Returns (values, remaining args).
-
-    A flag without a value is left in place, for Claude Code to report.
-    """
-    values: list[str] = []
-    rest: list[str] = []
-    index = 0
-    while index < len(args):
-        arg = args[index]
-        if arg == "--":
-            rest += args[index:]
-            break
-        if arg == flag and index + 1 < len(args):
-            values.append(args[index + 1])
-            index += 2
-            continue
-        if arg.startswith(f"{flag}="):
-            values.append(arg.removeprefix(f"{flag}="))
-        else:
-            rest.append(arg)
-        index += 1
-    return values, rest
-
-
 def merge_settings(*layers: dict | None) -> dict:
     """Deep-merge settings objects; a later layer wins per key, nested objects merge.
 
@@ -214,8 +181,8 @@ def take_agent_role(args: Sequence[str], roles: Mapping[str, Role]) -> tuple[str
             break
     rest = list(args[index:])
     if not (rest and rest[0] in SUBCOMMANDS):
-        before_terminator = rest[: rest.index("--")] if "--" in rest else rest
-        if any(arg == AGENT_ROLE_FLAG or arg.startswith(f"{AGENT_ROLE_FLAG}=") for arg in before_terminator):
+        # claude would reject it as an unknown option; as the value of another option it is not one.
+        if any(option.name == AGENT_ROLE_FLAG for option in scan(rest)):
             raise LaunchError(f"{AGENT_ROLE_FLAG} must come before the arguments for claude, right after the profile: claude-<profile> {AGENT_ROLE_FLAG} <name> [claude arguments...]")
     if requested is None:
         return None, rest
@@ -231,8 +198,7 @@ def is_passthrough(args: Sequence[str]) -> bool:
     """Tell whether claude runs a subcommand, or prints its version or help instead of starting a session."""
     if args and args[0] in SUBCOMMANDS:
         return True
-    before_terminator = args[: list(args).index("--")] if "--" in args else args
-    return any(arg in PASSTHROUGH_FLAGS for arg in before_terminator)
+    return has_option(args, *PASSTHROUGH_OPTIONS)
 
 
 def role_args(role: Role, args: Sequence[str]) -> list[str]:
@@ -243,14 +209,14 @@ def role_args(role: Role, args: Sequence[str]) -> list[str]:
     """
     result: list[str] = []
     for flag, value in (("--effort", role.effort), ("--permission-mode", role.permission_mode), ("--autocompact", role.autocompact), ("--agents", role.agents)):
-        if value is not None and not has_flag(args, flag, with_value=[flag]):
+        if value is not None and not has_option(args, flag):
             result += [flag, value]
     for flag, values in (
         ("--tools", role.tools), ("--allowed-tools", role.allowed_tools), ("--disallowed-tools", role.disallowed_tools),
         ("--plugin-dir", role.plugin_dirs), ("--mcp-config", role.mcp_config),
     ):
         result += [f"{flag}={value}" for value in values]
-    if role.strict_mcp_config and "--strict-mcp-config" not in args:
+    if role.strict_mcp_config and not has_option(args, "--strict-mcp-config"):
         result.append("--strict-mcp-config")
     return result
 
@@ -265,27 +231,16 @@ def resume_target(args: Sequence[str]) -> tuple[str, str | None] | None:
     """
     resumed: tuple[str, str | None] | None = None
     session_id: str | None = None
-    for index, arg in enumerate(args):
-        if arg == "--":
-            break
-        following = args[index + 1] if index + 1 < len(args) else None
-        value: str | None = None
-        if arg in ("-r", "--resume"):
-            value = following if following is not None and not following.startswith("-") else ""
-        elif arg.startswith("--resume="):
-            value = arg.removeprefix("--resume=")
-        elif arg.startswith("-r") and not arg.startswith("--") and len(arg) > 2:
-            value = arg[2:]
-        elif arg in ("-c", "--continue"):
-            resumed = resumed or ("continue", None)
-        elif arg == "--from-pr" or arg.startswith("--from-pr="):
-            resumed = resumed or ("picker", None)
-        elif arg == "--session-id" and following is not None:
-            session_id = following
-        elif arg.startswith("--session-id="):
-            session_id = arg.removeprefix("--session-id=")
-        if value is not None:
+    for option in scan(args):
+        if option.name == "--resume":
+            value = option.values[0] if option.values else ""
             resumed = ("id", value) if UUID_PATTERN.match(value) else ("picker", None)
+        elif option.name == "--continue":
+            resumed = resumed or ("continue", None)
+        elif option.name == "--from-pr":
+            resumed = resumed or ("picker", None)
+        elif option.name == "--session-id" and option.values:
+            session_id = option.values[0]
     if resumed is None and session_id is not None and UUID_PATTERN.match(session_id):
         resumed = ("session-id", session_id)
     return resumed
@@ -344,7 +299,7 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
         elif recorded is None or requested_name != recorded_role:
             target = f"session {session_id}" if kind == "id" else "the newest session here" if kind == "continue" else "the picked session"
             was = f", which ran as {role_label(recorded_role)}," if recorded is not None else ""
-            if not has_flag(args, SNAPSHOT_FLAG, with_value=[SNAPSHOT_FLAG]):
+            if not has_option(args, SNAPSHOT_FLAG):
                 snapshot_args = [SNAPSHOT_FLAG, "off"]
                 notes.append(f"resuming {target}{was} with {role_label(requested_name)}: {SNAPSHOT_FLAG} off sends the new system prompt, at the cost of prompt cache reuse for this run")
     role = roles[role_name] if role_name else None
@@ -361,7 +316,7 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
             mode = role.prompt.mode
             if mode in PROMPT_FLAGS:
                 flag, user_flags = PROMPT_FLAGS[mode]
-                if has_flag(args, *user_flags, with_value=user_flags):
+                if has_option(args, *user_flags):
                     # The user's own prompt flag wins, so the role's prompt is not in the system prompt.
                     # Mode none tells the hooks to inject it instead.
                     notes.append(f"your {' or '.join(user_flags)} replaces the prompt of role '{role.name}'; {ROLE_PROMPT_MODE_ENV}=none tells hooks to inject it")
@@ -372,7 +327,7 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
             env[ROLE_PROMPT_MODE_ENV] = mode
 
     model = role.model if role is not None and role.model else profile.model
-    model_args = ["--model", model] if model and not has_flag(args, "--model", with_value=["--model"]) else []
+    model_args = ["--model", model] if model and not has_option(args, "--model") else []
     passed_args = list(args)
 
     # Claude Code keeps only the last --settings flag instead of merging them, so start passes one
@@ -382,15 +337,17 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
     launcher_settings = merge_settings(context.git_attribution(context.cwd), role.settings if role is not None else None)
     # Without settings of its own, start leaves the user's --settings as it is.
     if launcher_settings:
-        user_settings, without_settings = pop_option(passed_args, "--settings")
+        user_settings, without_settings = remove_option(passed_args, "--settings")
+        # A --settings without a value stays, for claude to report.
+        user_settings = [values for values in user_settings if values]
         if user_settings:
             passed_args = without_settings
-            launcher_settings = merge_settings(launcher_settings, context.read_settings(user_settings[-1], context.cwd))
+            launcher_settings = merge_settings(launcher_settings, context.read_settings(user_settings[-1][0], context.cwd))
         settings_args = ["--settings", json.dumps(launcher_settings, ensure_ascii=False)]
 
     name_args: list[str] = []
     tmux, pane = context.environ.get("TMUX", ""), context.environ.get("TMUX_PANE", "")
-    if tmux and pane and not has_flag(args, *NAME_SKIP_FLAGS, with_value=NAME_SKIP_FLAGS_WITH_VALUE):
+    if tmux and pane and not has_option(args, *NAME_SKIP_OPTIONS):
         if tmux_session := context.tmux_session(pane):
             name_args = ["--name", f"{tmux_session}-p{pane.removeprefix('%')}"]
 

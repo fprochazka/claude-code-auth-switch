@@ -238,6 +238,18 @@ def test_version_and_help_pass_through_without_role_or_prompt_check(args):
         assert not any(key in launch.env for key in ROLE_ENV)
 
 
+@pytest.mark.parametrize("args", [["--append-system-prompt", "-h"], ["--system-prompt", "--help"], ["--name", "-v"], ["--session-id", "--version"]])
+def test_help_or_version_as_the_value_of_an_option_starts_a_session(args):
+    launch = build_launch(PROFILE, ["--agent-role", "worker", *args], context(), ROLES)
+
+    assert launch.env["FP_CC_AUTH_SWITCH_ROLE"] == "worker"
+    assert launch.argv[0] == "--add-dir=/profile dir" and "--model" in launch.argv and launch.argv[-len(args):] == args
+
+
+def test_agent_role_as_the_value_of_an_option_is_a_value():
+    assert build_launch(PROFILE, ["--name", "--agent-role"], context(), ROLES).argv[-2:] == ["--name", "--agent-role"]
+
+
 def test_help_after_double_dash_is_a_prompt_word():
     argv = build_launch(PROFILE, ["--", "-h"], context(), ROLES).argv
 

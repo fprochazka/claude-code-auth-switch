@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -62,6 +63,15 @@ PROMPT_FLAGS = {
 }
 
 
+# Claude Code reapplies nothing of the role on resume, so start looks up the role that a session ran as
+# in the start log. The lookup is by session id, which --resume also accepts as a name or search term.
+UUID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+SNAPSHOT_FLAG = "--system-prompt-snapshot"
+# Claude Code names a project directory after the cwd with every other character replaced by "-", and
+# cuts names longer than this, adding a hash of the path.
+PROJECT_DIR_NAME_LIMIT = 200
+
+
 class LaunchError(Exception):
     """The command line asks for something start cannot do."""
 
@@ -92,6 +102,11 @@ class LaunchContext:
     # Raises LaunchError when it cannot be read.
     read_settings: Callable[[str, str], dict] = lambda value, cwd: read_settings_value(value, cwd)
     is_file: Callable[[str], bool] = os.path.isfile
+    # The newest start-log line of a session (config dir, session id, cwd), or None without a readable log.
+    recorded_start: Callable[[Path, str, str], dict | None] = lambda config_dir, session_id, cwd: recorded_start_of(config_dir, session_id, cwd)
+    # The newest start-log line of the newest session in a directory (config dir, cwd), as -c would continue it.
+    # An empty dict when that session has no log, None when the directory has no session.
+    newest_start: Callable[[Path, str], dict | None] = lambda config_dir, cwd: newest_start_in(config_dir, cwd)
 
 
 @dataclass(frozen=True)
@@ -206,6 +221,46 @@ def role_args(role: Role, args: Sequence[str]) -> list[str]:
     return result
 
 
+def resume_target(args: Sequence[str]) -> tuple[str, str | None] | None:
+    """Tell what the arguments resume: ("id", <uuid>), ("continue", None), ("picker", None), ("session-id", <uuid>),
+    or None for a new session.
+
+    A --resume value that is no UUID is a name or a search term for the picker. --session-id counts only
+    when nothing else resumes; it also sets the id of a new session, so the caller treats it as a resume
+    only when the session has a start log.
+    """
+    resumed: tuple[str, str | None] | None = None
+    session_id: str | None = None
+    for index, arg in enumerate(args):
+        if arg == "--":
+            break
+        following = args[index + 1] if index + 1 < len(args) else None
+        value: str | None = None
+        if arg in ("-r", "--resume"):
+            value = following if following is not None and not following.startswith("-") else ""
+        elif arg.startswith("--resume="):
+            value = arg.removeprefix("--resume=")
+        elif arg.startswith("-r") and not arg.startswith("--") and len(arg) > 2:
+            value = arg[2:]
+        elif arg in ("-c", "--continue"):
+            resumed = resumed or ("continue", None)
+        elif arg == "--from-pr" or arg.startswith("--from-pr="):
+            resumed = resumed or ("picker", None)
+        elif arg == "--session-id" and following is not None:
+            session_id = following
+        elif arg.startswith("--session-id="):
+            session_id = arg.removeprefix("--session-id=")
+        if value is not None:
+            resumed = ("id", value) if UUID_PATTERN.match(value) else ("picker", None)
+    if resumed is None and session_id is not None and UUID_PATTERN.match(session_id):
+        resumed = ("session-id", session_id)
+    return resumed
+
+
+def role_label(role_name: str | None) -> str:
+    return f"role '{role_name}'" if role_name else "no role"
+
+
 def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchContext, roles: Mapping[str, Role] | None = None) -> Launch:
     roles = roles or {}
     requested_role, args = take_agent_role(user_args, roles)
@@ -219,8 +274,42 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
         return Launch(args, env)
 
     notes: list[str] = []
-    role_name = requested_role if requested_role is not None else profile.default_role
-    role = roles[role_name] if role_name and role_name != NO_ROLE else None
+    requested_name = None if requested_role == NO_ROLE else requested_role
+    role_name = requested_name if requested_role is not None else profile.default_role
+    # The role a resumed session ran as. Its system prompt is recorded on the first request and sent
+    # again on every resume, so a different role needs the snapshot off to reach the model.
+    snapshot_args: list[str] = []
+    resumed = resume_target(args)
+    if resumed is not None and resumed[0] == "session-id":
+        known = context.recorded_start(profile.config_dir, resumed[1], context.cwd) is not None
+        resumed = ("id", resumed[1]) if known else None
+    if resumed is not None:
+        kind, session_id = resumed
+        recorded: dict | None = None
+        if kind == "id":
+            recorded = context.recorded_start(profile.config_dir, session_id, context.cwd) or {}
+        elif kind == "continue":
+            recorded = context.newest_start(profile.config_dir, context.cwd)
+            recorded = recorded if recorded is not None else {}
+        recorded_role = recorded.get("role") if recorded is not None else None
+        recorded_role = recorded_role if isinstance(recorded_role, str) and recorded_role else None
+
+        if requested_role is None:
+            role_name = None
+            if kind == "id" and recorded_role:
+                if recorded_role in roles:
+                    role_name = recorded_role
+                else:
+                    notes.append(f"warning: session {session_id} ran as role '{recorded_role}', which the config no longer defines; resuming it without a role")
+            elif kind == "continue" and recorded_role:
+                notes.append(f"--continue starts without a role; the newest session here ran as role '{recorded_role}', add --agent-role {recorded_role} to keep it")
+        elif recorded is None or requested_name != recorded_role:
+            target = f"session {session_id}" if kind == "id" else "the newest session here" if kind == "continue" else "the picked session"
+            was = f", which ran as {role_label(recorded_role)}," if recorded is not None else ""
+            if not has_flag(args, SNAPSHOT_FLAG, with_value=[SNAPSHOT_FLAG]):
+                snapshot_args = [SNAPSHOT_FLAG, "off"]
+                notes.append(f"resuming {target}{was} with {role_label(requested_name)}: {SNAPSHOT_FLAG} off sends the new system prompt, at the cost of prompt cache reuse for this run")
+    role = roles[role_name] if role_name else None
 
     prompt_args: list[str] = []
     if role is not None:
@@ -271,7 +360,44 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
     if role is not None:
         add_dir_args += [f"--add-dir={directory}" for directory in role.add_dirs]
         role_launch_args = [*role_args(role, args), *prompt_args, *role.extra_args]
-    return Launch([*add_dir_args, *settings_args, *name_args, *role_launch_args, *passed_args], env, tuple(notes))
+    return Launch([*add_dir_args, *settings_args, *name_args, *role_launch_args, *snapshot_args, *passed_args], env, tuple(notes))
+
+
+def project_dir_names(cwd: str) -> list[str]:
+    """Glob patterns for the projects/ directory of a cwd, by the path as given and resolved."""
+    names: list[str] = []
+    for path in dict.fromkeys((cwd, os.path.realpath(cwd))):
+        name = re.sub(r"[^a-zA-Z0-9]", "-", path)
+        # The name holds only letters, digits and "-", so it needs no glob escaping.
+        names.append(name if len(name) <= PROJECT_DIR_NAME_LIMIT else name[:PROJECT_DIR_NAME_LIMIT] + "-*")
+    return names
+
+
+def recorded_start_of(config_dir: Path, session_id: str, cwd: str) -> dict | None:
+    from claude_code_auth_switch.session_start import LOG_NAME, read_newest_line
+
+    projects = config_dir / "projects"
+    for pattern in [*project_dir_names(cwd), "*"]:
+        for log in projects.glob(f"{pattern}/{session_id}/{LOG_NAME}"):
+            return read_newest_line(log)
+    return None
+
+
+def newest_start_in(config_dir: Path, cwd: str) -> dict | None:
+    from claude_code_auth_switch.session_start import LOG_NAME, read_newest_line
+
+    newest: tuple[float, Path] | None = None
+    for pattern in project_dir_names(cwd):
+        for transcript in (config_dir / "projects").glob(f"{pattern}/*.jsonl"):
+            try:
+                mtime = transcript.stat().st_mtime
+            except OSError:
+                continue
+            if newest is None or mtime > newest[0]:
+                newest = (mtime, transcript)
+    if newest is None:
+        return None
+    return read_newest_line(newest[1].with_suffix("") / LOG_NAME) or {}
 
 
 def resolve_profile(config: dict, secrets: dict[str, dict[str, str]], profiles_base: Path, name: str) -> Profile:

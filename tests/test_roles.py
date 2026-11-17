@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import os
 import subprocess
@@ -5,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from claude_code_auth_switch import launcher
 from claude_code_auth_switch.config import ConfigError
 from claude_code_auth_switch.launcher import LaunchContext, LaunchError, Profile, build_launch, resolve_profile
 from claude_code_auth_switch.roles import Role, RolePrompt, resolve_roles
@@ -289,3 +291,178 @@ def test_install_and_start_refuse_an_invalid_role(role_launch, sandbox):
     for result in (install, start):
         assert result.returncode == 1 and result.stdout.count("argv") == 0
         assert f"{config}: role 'dispatcher': unknown key 'modle'" in result.stderr
+
+
+# Resume
+
+SESSION = "0b6f2c1e-1111-4222-8333-444455556666"
+
+
+def resume_context(recorded=None, newest=None, **kwargs) -> tuple[LaunchContext, list]:
+    calls: list = []
+
+    def recorded_start(config_dir, session_id, cwd):
+        calls.append(("recorded", config_dir, session_id, cwd))
+        return recorded
+
+    def newest_start(config_dir, cwd):
+        calls.append(("newest", config_dir, cwd))
+        return newest
+
+    return dataclasses.replace(context(**kwargs), recorded_start=recorded_start, newest_start=newest_start), calls
+
+
+@pytest.mark.parametrize("args", [["--resume", SESSION], ["-r", SESSION], [f"--resume={SESSION}"], [f"-r{SESSION}"], ["--session-id", SESSION]])
+def test_resume_reapplies_the_recorded_role(args):
+    ctx, calls = resume_context(recorded={"v": 1, "role": "worker"})
+
+    launch = build_launch(PROFILE, args, ctx, ROLES)
+
+    assert launch.env["FP_CC_AUTH_SWITCH_ROLE"] == "worker"
+    assert launch.argv == ["--add-dir", "/profile dir", "--system-prompt-file", "/roles/worker.md", *args, "--model", "sonnet"]
+    assert (launch.notes, calls[0]) == ((), ("recorded", Path("/profiles/work"), SESSION, "/work"))
+
+
+def test_resume_of_a_session_without_role_or_log_ignores_the_default_role():
+    profile = dataclasses.replace(PROFILE, default_role="dispatcher")
+
+    for recorded in ({"v": 1, "role": None}, {"v": 1}, None):
+        launch = build_launch(profile, ["--resume", SESSION], resume_context(recorded=recorded)[0], ROLES)
+        assert ("FP_CC_AUTH_SWITCH_ROLE" not in launch.env, launch.notes) == (True, ()), recorded
+
+
+def test_session_id_of_a_new_session_keeps_the_default_role():
+    profile = dataclasses.replace(PROFILE, default_role="worker")
+
+    launch = build_launch(profile, ["--session-id", SESSION], resume_context(recorded=None)[0], ROLES)
+
+    assert (launch.env["FP_CC_AUTH_SWITCH_ROLE"], "--system-prompt-snapshot" in launch.argv) == ("worker", False)
+
+
+def test_resume_with_the_recorded_role_keeps_the_snapshot():
+    launch = build_launch(PROFILE, ["--agent-role", "worker", "-r", SESSION], resume_context(recorded={"role": "worker"})[0], ROLES)
+
+    assert ("--system-prompt-snapshot" in launch.argv, launch.notes) == (False, ())
+
+
+@pytest.mark.parametrize("agent_role, recorded, label", [
+    ("dispatcher", {"role": "worker"}, "which ran as role 'worker', with role 'dispatcher'"),
+    ("none", {"role": "worker"}, "which ran as role 'worker', with no role"),
+    ("worker", None, "which ran as no role, with role 'worker'"),
+])
+def test_resume_with_another_role_turns_the_snapshot_off(agent_role, recorded, label):
+    launch = build_launch(PROFILE, ["--agent-role", agent_role, "--resume", SESSION], resume_context(recorded=recorded)[0], ROLES)
+
+    assert launch.argv[launch.argv.index("--system-prompt-snapshot"):][:4] == ["--system-prompt-snapshot", "off", "--resume", SESSION]
+    assert launch.env.get("FP_CC_AUTH_SWITCH_ROLE") == (None if agent_role == "none" else agent_role)
+    assert launch.notes == (f"resuming session {SESSION}, {label}: --system-prompt-snapshot off sends the new system prompt, at the cost of prompt cache reuse for this run",)
+
+
+def test_a_users_own_snapshot_flag_wins():
+    launch = build_launch(PROFILE, ["--agent-role", "worker", "-r", SESSION, "--system-prompt-snapshot=on"], resume_context(recorded={"role": "dispatcher"})[0], ROLES)
+
+    assert launch.argv.count("off") == 0 and launch.notes == ()
+
+
+def test_resume_of_a_role_the_config_no_longer_defines_warns_and_resumes_without_a_role():
+    launch = build_launch(PROFILE, ["--resume", SESSION], resume_context(recorded={"role": "retired"})[0], ROLES)
+
+    assert "FP_CC_AUTH_SWITCH_ROLE" not in launch.env
+    assert launch.notes == (f"warning: session {SESSION} ran as role 'retired', which the config no longer defines; resuming it without a role",)
+
+
+def test_continue_gets_no_role_and_a_notice_when_the_newest_session_had_one():
+    profile = dataclasses.replace(PROFILE, default_role="worker")
+
+    launch = build_launch(profile, ["-c"], resume_context(newest={"role": "dispatcher"})[0], ROLES)
+    quiet = build_launch(profile, ["--continue"], resume_context(newest={})[0], ROLES)
+
+    assert "FP_CC_AUTH_SWITCH_ROLE" not in launch.env and "FP_CC_AUTH_SWITCH_ROLE" not in quiet.env
+    assert launch.notes == ("--continue starts without a role; the newest session here ran as role 'dispatcher', add --agent-role dispatcher to keep it",)
+    assert quiet.notes == ()
+
+
+def test_continue_with_a_role_compares_with_the_newest_session():
+    same = build_launch(PROFILE, ["-c", "--agent-role", "worker"], resume_context(newest={"role": "worker"})[0], ROLES)
+    other = build_launch(PROFILE, ["-c", "--agent-role", "worker"], resume_context(newest=None)[0], ROLES)
+
+    assert "--system-prompt-snapshot" not in same.argv
+    assert other.notes == ("resuming the newest session here, which ran as no role, with role 'worker': --system-prompt-snapshot off sends the new system prompt, at the cost of prompt cache reuse for this run",)
+
+
+@pytest.mark.parametrize("args", [["--resume"], ["-r", "-p", "x"], ["--resume", "my session name"], ["--from-pr", "12"]])
+def test_picker_gets_no_automatic_role_and_no_notice_but_an_explicit_role_turns_the_snapshot_off(args):
+    ctx, calls = resume_context(recorded={"role": "worker"}, newest={"role": "worker"})
+    profile = dataclasses.replace(PROFILE, default_role="worker")
+
+    plain = build_launch(profile, args, ctx, ROLES)
+    explicit = build_launch(profile, ["--agent-role", "worker", *args], ctx, ROLES)
+
+    assert ("FP_CC_AUTH_SWITCH_ROLE" not in plain.env, plain.notes, calls) == (True, (), [])
+    assert explicit.env["FP_CC_AUTH_SWITCH_ROLE"] == "worker" and "--system-prompt-snapshot" in explicit.argv
+    assert explicit.notes[0].startswith("resuming the picked session with role 'worker':")
+
+
+def test_resume_target_ignores_arguments_after_double_dash():
+    assert launcher.resume_target(["--", "--resume", SESSION]) is None
+    assert launcher.resume_target(["--session-id", SESSION, "--resume", "abc"]) == ("picker", None)
+
+
+# Start log lookup
+
+
+def write_log(path: Path, *lines: str) -> None:
+    path.parent.mkdir(parents=True)
+    path.write_text("".join(f"{line}\n" for line in lines))
+
+
+def test_recorded_start_reads_the_newest_valid_line_from_any_project(tmp_path):
+    log = tmp_path / "projects/-elsewhere" / SESSION / "auth-switch-profile-starts.jsonl"
+    write_log(log, json.dumps({"v": 1, "role": "worker"}), json.dumps({"v": 1, "role": "dispatcher"}), "{broken")
+
+    assert launcher.recorded_start_of(tmp_path, SESSION, "/work")["role"] == "dispatcher"
+    assert launcher.recorded_start_of(tmp_path, "1b6f2c1e-1111-4222-8333-444455556666", "/work") is None
+
+
+def test_newest_start_follows_claudes_project_dir_naming(tmp_path):
+    cwd = "/home/u/devel/my_repo.git"
+    project = tmp_path / "projects" / "-home-u-devel-my-repo-git"
+    project.mkdir(parents=True)
+    old, new = "1" * 8 + SESSION[8:], SESSION
+    for index, session in enumerate((old, new)):
+        (project / f"{session}.jsonl").write_text("{}\n")
+        os.utime(project / f"{session}.jsonl", (1000 + index, 1000 + index))
+    write_log(project / old / "auth-switch-profile-starts.jsonl", json.dumps({"role": "worker"}))
+
+    assert launcher.newest_start_in(tmp_path, cwd) == {}
+    write_log(project / new / "auth-switch-profile-starts.jsonl", json.dumps({"role": "dispatcher"}))
+    assert launcher.newest_start_in(tmp_path, cwd)["role"] == "dispatcher"
+    assert launcher.newest_start_in(tmp_path, "/nowhere") is None
+
+
+def test_long_project_dir_names_match_by_prefix(tmp_path):
+    cwd = "/" + "a" * 250
+    project = tmp_path / "projects" / ("-" + "a" * 199 + "-k3j2h1")
+    write_log(project / SESSION / "auth-switch-profile-starts.jsonl", json.dumps({"role": "worker"}))
+    (project / f"{SESSION}.jsonl").write_text("{}\n")
+
+    assert launcher.newest_start_in(tmp_path, cwd) == {"role": "worker"}
+
+
+def test_launcher_resume_reapplies_and_switches_the_role(role_launch, sandbox):
+    run, config, prompt = role_launch
+    config.write_text(config.read_text().replace("    default_role: dispatcher\n", "") + "  worker: {}\n")
+    log = sandbox.home / "profiles/work/projects/-elsewhere" / SESSION / "auth-switch-profile-starts.jsonl"
+    log.parent.mkdir(parents=True)
+    log.write_text(json.dumps({"v": 1, "session_id": SESSION, "role": "dispatcher"}) + "\n")
+
+    reapplied = run("--resume", SESSION)
+    switched = run("--agent-role", "worker", "--resume", SESSION)
+
+    assert json.loads(reapplied.stdout)["argv"] == ["--append-system-prompt-file", str(prompt), "--resume", SESSION, "--model", "opus"]
+    assert reapplied.stderr == ""
+    assert json.loads(switched.stdout) == {
+        "argv": ["--system-prompt-snapshot", "off", "--resume", SESSION],
+        "env": {"FP_CC_AUTH_SWITCH_PROFILE": "work", "FP_CC_AUTH_SWITCH_ROLE": "worker", "FP_CC_AUTH_SWITCH_ROLE_PROMPT": None, "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": None, "ROLE_ONLY": None},
+    }
+    assert switched.stderr == f"cc-auth-switch start: resuming session {SESSION}, which ran as role 'dispatcher', with role 'worker': --system-prompt-snapshot off sends the new system prompt, at the cost of prompt cache reuse for this run\n"

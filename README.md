@@ -207,7 +207,7 @@ profiles:
     default_role: worker
 ```
 
-Pick a role with `--agent-role <name>` or `--agent-role=<name>`. `start` consumes the flag and never passes it to `claude`. A profile's `default_role` applies when the command line has no `--agent-role`, and `--agent-role none` starts without a role even then. A role that the config does not define, in the flag or in `default_role`, stops the launch with an error. Subcommands such as `mcp list` never get a role.
+Pick a role with `--agent-role <name>` or `--agent-role=<name>`. `start` consumes the flag and never passes it to `claude`. A profile's `default_role` applies when the command line has no `--agent-role`, and `--agent-role none` starts without a role even then. A resumed session gets the role it ran as, see [Resuming a session with a role](#resuming-a-session-with-a-role). A role that the config does not define, in the flag or in `default_role`, stops the launch with an error. Subcommands such as `mcp list` never get a role.
 
 Every key maps to one `claude` flag, see the [configuration reference](#auth-switchyaml). Precedence is profile, then role, then your own flags, the last one winning:
 
@@ -225,6 +225,17 @@ No role string that reaches the `claude` command line or the environment may con
 The system prompt flags are used instead of a hook by default because Claude Code moves a hook's `additionalContext` above 10,000 characters into a file and keeps only a short preview in context. The system prompt has no such limit, and it survives compaction. If you pass the matching system prompt flag yourself, yours wins: `start` drops the role's flag, sets the prompt mode to `none` so that a hook can inject the role's text, and prints a note.
 
 `start` clears the role variables that it inherits, then sets them for the role it applies, see [Environment variables](#environment-variables). The role's `env` is merged over the profile's.
+
+#### Resuming a session with a role
+
+A resume restores neither the role's tool rules nor its model unless they are passed again, so `start` looks up the role that the session ran as. It reads the newest line for the session in the [profile start log](#profile-start-log), `projects/*/<session-id>/auth-switch-profile-starts.jsonl` under the profile directory, and applies that role. A profile's `default_role` does not apply to a resume. What counts as a resume, and what `start` does:
+
+- **`--resume <id>`, `-r <id>`, or `--session-id <id>` of a session that has a start log, without `--agent-role`:** `start` applies the recorded role. A session without a role, or without a readable log, resumes without a role, silently. A recorded role that the config no longer defines prints a warning, and the session resumes without a role.
+- **The same with `--agent-role`:** your role applies. Claude Code records the system prompt on a conversation's first request and sends that copy again on every resume until the conversation compacts, so a new role prompt would not reach the model. When your role differs from the recorded one, `start` adds `--system-prompt-snapshot off` and prints a note. That run reuses less of the prompt cache. `--agent-role none` counts as a role here: it resumes a dispatcher without its role.
+- **`-c`/`--continue`:** Claude Code picks the session, so `start` applies no role. When the newest session in the start directory ran with a role, `start` prints a notice that names it. With `--agent-role`, `start` compares your role with that newest session.
+- **The picker:** `--resume` without a value, a value that is not a session id (a session name or a search term), and `--from-pr` get no role and no notice, because `start` cannot know which session you pick. With `--agent-role`, `start` always adds `--system-prompt-snapshot off`.
+
+A `--session-id` with a new id starts a new session and gets the profile's `default_role` as usual. If you pass `--system-prompt-snapshot` yourself, `start` does not add its own.
 
 ### Secrets
 
@@ -429,7 +440,7 @@ The `claude-<name>` launchers run this command with the `--config` path that `in
 2. Removes `--agent-role` from the arguments.
 3. Drops every inherited `CLAUDE_*` and `ANTHROPIC_*` variable, and the `FP_CC_AUTH_SWITCH_ROLE*` variables, so a launch from inside another Claude Code session does not inherit its account or its role. Then it sets `CLAUDE_CONFIG_DIR`, `FP_CC_AUTH_SWITCH_PROFILE` and the profile's `env`.
 4. Passes the arguments through when the first one is a Claude Code subcommand such as `mcp`, `auth` or `plugin`, because subcommands reject the session options.
-5. Otherwise picks the [role](#roles), sets its `env` and the role variables, and adds `--add-dir` for each `add_dirs` entry of the profile and the role, `--settings` with the [attribution from git config](#attribution-from-git-config), the role's `settings` and your own `--settings` merged into it, the [tmux session name](#session-names-in-tmux), the role's flags and `--model`. It adds the name, the model and the role's single-value flags only when you did not pass the same option yourself.
+5. Otherwise picks the [role](#roles), also the role a [resumed session](#resuming-a-session-with-a-role) ran as, sets its `env` and the role variables, and adds `--add-dir` for each `add_dirs` entry of the profile and the role, `--settings` with the [attribution from git config](#attribution-from-git-config), the role's `settings` and your own `--settings` merged into it, the [tmux session name](#session-names-in-tmux), the role's flags, `--system-prompt-snapshot off` when a resume switches the role, and `--model`. It adds the name, the model and the role's single-value flags only when you did not pass the same option yourself.
 6. Prints its notes to stderr, and replaces itself with `claude`.
 
 A config that is missing, cannot be parsed, or fails validation stops the launch. So does a profile that the config no longer defines, a secrets file that is invalid, unreadable or not ignored by git, an unknown `--agent-role`, a role whose prompt file does not exist, and a `--settings` file that `start` cannot read. `start` then prints the config path and the error and exits with a non-zero status, without starting Claude. Any other error in `start` also stops the launch, with one line that names the profile, the config path and the error. Fix the config and launch again; a reinstall is only needed for the settings that `install` writes into the profile directory.
@@ -556,7 +567,7 @@ if [ -n "${FP_CC_AUTH_SWITCH_PROFILE:-}" ]; then
 fi
 ```
 
-`start` always clears the three role variables before it sets them, so a launcher run from another session's Bash does not inherit that session's role. Hooks should read these variables to learn the role of the current start: Claude Code does not order `SessionStart` hooks from different sources, so another hook may run before the [profile start log](#profile-start-log) has the line for this start. Without a launcher, you can set the variables by hand before you run `claude`.
+`start` always clears the three role variables before it sets them, so a launcher run from another session's Bash does not inherit that session's role. Hooks should read these variables to learn the role of the current start: Claude Code does not order `SessionStart` hooks from different sources, so another hook may run before the [profile start log](#profile-start-log) has the line for this start. The start log is the place to read a session's role afterwards, as a resume does. Without a launcher, you can set the variables by hand before you run `claude`.
 
 ## Limitations
 

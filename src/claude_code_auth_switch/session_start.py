@@ -115,6 +115,22 @@ def record(stdin_text: str) -> None:
         os.close(fd)
 
 
+def read_newest_line(log: Path) -> dict | None:
+    """Return the newest line of a start log, or None when the log is missing, unreadable or has no valid line."""
+    try:
+        lines = log.read_text(errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
 def log_error(stdin_text: str) -> None:
     try:
         with open(config_dir() / ERROR_LOG_NAME, "a") as log:

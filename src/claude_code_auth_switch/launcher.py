@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
+
+from claude_code_auth_switch.config import ENV_NAME, ConfigError
+from claude_code_auth_switch.roles import NO_ROLE, Role, resolve_roles
 
 PROG = "cc-auth-switch start"
 
@@ -41,16 +43,23 @@ TMUX_TIMEOUT_SECONDS = 2
 # session does not carry over its account, config dir or session state.
 CLEARED_ENV_PREFIXES = ("CLAUDE_", "ANTHROPIC_")
 
-
-# Names that bash's `export NAME=...` accepted; the bash wrappers of earlier versions stopped at any other.
-ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# Hooks read these to tell which role runs and whether its prompt is already in the system prompt. They
+# are always cleared first: a launcher run from another session's Bash would otherwise inherit its role.
+ROLE_ENV = "FP_CC_AUTH_SWITCH_ROLE"
+ROLE_PROMPT_ENV = "FP_CC_AUTH_SWITCH_ROLE_PROMPT"
+ROLE_PROMPT_MODE_ENV = "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE"
+ROLE_ENV_VARS = (ROLE_ENV, ROLE_PROMPT_ENV, ROLE_PROMPT_MODE_ENV)
 
 # Set to 1 to get the traceback of an unexpected error in `start` instead of a one-line message.
 DEBUG_ENV = "CC_AUTH_SWITCH_DEBUG"
 
+AGENT_ROLE_FLAG = "--agent-role"
 
-class ConfigError(Exception):
-    """The config does not describe a launchable profile."""
+# The system prompt flag of each prompt mode, and the user flags that replace it.
+PROMPT_FLAGS = {
+    "append": ("--append-system-prompt-file", ("--append-system-prompt", "--append-system-prompt-file")),
+    "replace": ("--system-prompt-file", ("--system-prompt", "--system-prompt-file")),
+}
 
 
 class LaunchError(Exception):
@@ -65,6 +74,8 @@ class Profile:
     env: dict[str, str] = field(default_factory=dict)
     add_dirs: tuple[Path, ...] = ()
     model: str | None = None
+    # Role applied when the command line has no --agent-role.
+    default_role: str | None = None
 
 
 @dataclass(frozen=True)
@@ -80,12 +91,15 @@ class LaunchContext:
     # The settings object of a user's --settings value, inline JSON or a file path relative to the cwd.
     # Raises LaunchError when it cannot be read.
     read_settings: Callable[[str, str], dict] = lambda value, cwd: read_settings_value(value, cwd)
+    is_file: Callable[[str], bool] = os.path.isfile
 
 
 @dataclass(frozen=True)
 class Launch:
     argv: list[str]
     env: dict[str, str]
+    # One-line notes for stderr, about what start did with the role.
+    notes: tuple[str, ...] = ()
 
 
 def has_flag(args: Sequence[str], *flags: str, with_value: Sequence[str] = ()) -> bool:
@@ -158,40 +172,106 @@ def read_settings_value(value: str, cwd: str) -> dict:
     return settings
 
 
-def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchContext) -> Launch:
-    env = {key: value for key, value in context.environ.items() if not key.startswith(CLEARED_ENV_PREFIXES)}
+def take_agent_role(args: Sequence[str], roles: Mapping[str, Role]) -> tuple[str | None, list[str]]:
+    """Remove --agent-role from the arguments, which claude does not know. Returns (the last role name or None, the rest)."""
+    values, rest = pop_option(args, AGENT_ROLE_FLAG)
+    if AGENT_ROLE_FLAG in rest[: rest.index("--") if "--" in rest else len(rest)]:
+        raise LaunchError(f"{AGENT_ROLE_FLAG} needs a role name, or '{NO_ROLE}' for no role")
+    if not values:
+        return None, rest
+    requested = values[-1]
+    if requested != NO_ROLE and requested not in roles:
+        defined = ", ".join(sorted(roles)) or "none, the config has no roles: section"
+        raise LaunchError(f"{AGENT_ROLE_FLAG}: role '{requested}' is not defined in the config (defined roles: {defined})")
+    return requested, rest
+
+
+def role_args(role: Role, args: Sequence[str]) -> list[str]:
+    """The claude flags of a role, without the ones the user passed: a user's single-value flag wins.
+
+    List flags take one value each in the --flag=value form. Claude Code's option parser lets a
+    variadic `--flag value` swallow the following words, the user's prompt included; --flag=value takes one.
+    """
+    result: list[str] = []
+    for flag, value in (("--effort", role.effort), ("--permission-mode", role.permission_mode), ("--autocompact", role.autocompact), ("--agents", role.agents)):
+        if value is not None and not has_flag(args, flag, with_value=[flag]):
+            result += [flag, value]
+    for flag, values in (
+        ("--tools", role.tools), ("--allowed-tools", role.allowed_tools), ("--disallowed-tools", role.disallowed_tools),
+        ("--plugin-dir", role.plugin_dirs), ("--mcp-config", role.mcp_config),
+    ):
+        result += [f"{flag}={value}" for value in values]
+    if role.strict_mcp_config and "--strict-mcp-config" not in args:
+        result.append("--strict-mcp-config")
+    return result
+
+
+def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchContext, roles: Mapping[str, Role] | None = None) -> Launch:
+    roles = roles or {}
+    requested_role, args = take_agent_role(user_args, roles)
+
+    env = {key: value for key, value in context.environ.items() if not key.startswith(CLEARED_ENV_PREFIXES) and key not in ROLE_ENV_VARS}
     env["CLAUDE_CONFIG_DIR"] = str(profile.config_dir)
     env["FP_CC_AUTH_SWITCH_PROFILE"] = profile.name
     env.update(profile.env)
 
-    if user_args and user_args[0] in SUBCOMMANDS:
-        return Launch(list(user_args), env)
+    if args and args[0] in SUBCOMMANDS:
+        return Launch(args, env)
 
-    args = list(user_args)
-    if profile.model and not has_flag(user_args, "--model", with_value=["--model"]):
-        args += ["--model", profile.model]
+    notes: list[str] = []
+    role_name = requested_role if requested_role is not None else profile.default_role
+    role = roles[role_name] if role_name and role_name != NO_ROLE else None
+
+    prompt_args: list[str] = []
+    if role is not None:
+        env.update(role.env)
+        env[ROLE_ENV] = role.name
+        if role.prompt is not None:
+            if not context.is_file(role.prompt.file):
+                raise LaunchError(f"role '{role.name}': the prompt file {role.prompt.file} does not exist")
+            mode = role.prompt.mode
+            if mode in PROMPT_FLAGS:
+                flag, user_flags = PROMPT_FLAGS[mode]
+                if has_flag(args, *user_flags, with_value=user_flags):
+                    # The user's own prompt flag wins, so the role's prompt is not in the system prompt.
+                    # Mode none tells the hooks to inject it instead.
+                    notes.append(f"your {' or '.join(user_flags)} replaces the prompt of role '{role.name}'; {ROLE_PROMPT_MODE_ENV}=none tells hooks to inject it")
+                    mode = "none"
+                else:
+                    prompt_args = [flag, role.prompt.file]
+            env[ROLE_PROMPT_ENV] = role.prompt.file
+            env[ROLE_PROMPT_MODE_ENV] = mode
+
+    model = role.model if role is not None and role.model else profile.model
+    passed_args = list(args)
+    if model and not has_flag(args, "--model", with_value=["--model"]):
+        passed_args += ["--model", model]
 
     # Claude Code keeps only the last --settings flag instead of merging them, so start passes one
-    # --settings with every layer merged, and the user's own --settings, the last one as Claude Code
-    # would take it, merged in last.
+    # --settings with every layer merged: the git config attribution, the role's settings, and the
+    # user's own --settings, the last one as Claude Code would take it.
     settings_args: list[str] = []
-    launcher_settings = merge_settings(context.git_attribution(context.cwd))
+    launcher_settings = merge_settings(context.git_attribution(context.cwd), role.settings if role is not None else None)
     # Without settings of its own, start leaves the user's --settings as it is.
     if launcher_settings:
-        user_settings, without_settings = pop_option(args, "--settings")
+        user_settings, without_settings = pop_option(passed_args, "--settings")
         if user_settings:
-            args = without_settings
+            passed_args = without_settings
             launcher_settings = merge_settings(launcher_settings, context.read_settings(user_settings[-1], context.cwd))
         settings_args = ["--settings", json.dumps(launcher_settings, ensure_ascii=False)]
 
     name_args: list[str] = []
     tmux, pane = context.environ.get("TMUX", ""), context.environ.get("TMUX_PANE", "")
-    if tmux and pane and not has_flag(user_args, *NAME_SKIP_FLAGS, with_value=NAME_SKIP_FLAGS_WITH_VALUE):
+    if tmux and pane and not has_flag(args, *NAME_SKIP_FLAGS, with_value=NAME_SKIP_FLAGS_WITH_VALUE):
         if tmux_session := context.tmux_session(pane):
             name_args = ["--name", f"{tmux_session}-p{pane.removeprefix('%')}"]
 
     add_dir_args = [arg for directory in profile.add_dirs for arg in ("--add-dir", str(directory))]
-    return Launch([*add_dir_args, *settings_args, *name_args, *args], env)
+    role_launch_args: list[str] = []
+    if role is not None:
+        add_dir_args += [f"--add-dir={directory}" for directory in role.add_dirs]
+        role_launch_args = [*role_args(role, args), *prompt_args, *role.extra_args]
+    return Launch([*add_dir_args, *settings_args, *name_args, *role_launch_args, *passed_args], env, tuple(notes))
 
 
 def resolve_profile(config: dict, secrets: dict[str, dict[str, str]], profiles_base: Path, name: str) -> Profile:
@@ -227,6 +307,13 @@ def resolve_profile(config: dict, secrets: dict[str, dict[str, str]], profiles_b
     if any("\0" in directory for directory in add_dirs):
         raise ConfigError(f"profile '{name}': an 'add_dirs' entry contains a NUL character")
 
+    default_role = profile_config.get("default_role")
+    if default_role is not None:
+        if not isinstance(default_role, str) or not default_role:
+            raise ConfigError(f"profile '{name}': 'default_role' must be a role name")
+        if default_role not in resolve_roles(config):
+            raise ConfigError(f"profile '{name}': default_role '{default_role}' is not defined under roles:")
+
     model = profile_config.get("model") or None
     if model is not None and "\0" in str(model):
         raise ConfigError(f"profile '{name}': 'model' contains a NUL character")
@@ -238,11 +325,12 @@ def resolve_profile(config: dict, secrets: dict[str, dict[str, str]], profiles_b
         env=env_vars,
         add_dirs=tuple(expand_path(directory) for directory in add_dirs),
         model=str(model) if model is not None else None,
+        default_role=default_role,
     )
 
 
-def load_profile(config_path: Path, name: str) -> Profile:
-    """Read the config and the secrets file and resolve one profile. Exits or raises ConfigError on a broken config."""
+def load_profile(config_path: Path, name: str) -> tuple[Profile, dict[str, Role]]:
+    """Read the config and the secrets file and resolve one profile and all roles. Exits or raises ConfigError on a broken config."""
     from claude_code_auth_switch.config import (
         DEFAULT_PROFILES_DIR,
         check_secrets_git_safety,
@@ -261,7 +349,7 @@ def load_profile(config_path: Path, name: str) -> Profile:
         check_secrets_git_safety(secrets_path)
         secrets = load_secrets(secrets_path, config)
     profiles_base = expand_path(str(config.get("profiles_dir", DEFAULT_PROFILES_DIR)))
-    return resolve_profile(config, secrets, profiles_base, name)
+    return resolve_profile(config, secrets, profiles_base, name), resolve_roles(config)
 
 
 def logical_cwd(environ: Mapping[str, str]) -> str:
@@ -331,7 +419,7 @@ def main(argv: Sequence[str]) -> int:
 def launch_profile(config_path: Path, name: str, user_args: list[str]) -> int:
     """Resolve the profile and replace this process with claude. Returns only when the launch cannot happen."""
     try:
-        profile = load_profile(config_path, name)
+        profile, roles = load_profile(config_path, name)
     except ConfigError as error:
         print(f"Error: {config_path}: {error}", file=sys.stderr)
         print(f"{PROG}: not starting Claude for profile '{name}'", file=sys.stderr)
@@ -348,11 +436,13 @@ def launch_profile(config_path: Path, name: str, user_args: list[str]) -> int:
         git_attribution=git_attribution_of,
     )
     try:
-        launch = build_launch(profile, user_args, context)
+        launch = build_launch(profile, user_args, context, roles)
     except LaunchError as error:
         print(f"{PROG}: {error}", file=sys.stderr)
         print(f"{PROG}: not starting Claude for profile '{name}'", file=sys.stderr)
         return 2
+    for note in launch.notes:
+        print(f"{PROG}: {note}", file=sys.stderr)
     sys.stdout.flush()
     sys.stderr.flush()
     try:

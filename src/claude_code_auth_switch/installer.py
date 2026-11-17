@@ -676,6 +676,12 @@ def install(config_arg: Path | None, sync: bool, force: bool) -> None:
     tool_command = resolve_command(TOOL_COMMAND_NAME)
     session_start_hook = f"{shlex.quote(str(tool_command))} {SESSION_START_SUBCOMMAND}"
     source_plugin_keys = read_source_plugin_keys(source_dir)
+    # start validates the roles on every launch too; this reports a broken role before anything is written.
+    try:
+        launcher.resolve_roles(config)
+    except launcher.ConfigError as error:
+        print(f"Error: {config_path}: {error}", file=sys.stderr)
+        sys.exit(1)
     for profile_name, profile_config in config["profiles"].items():
         # The launcher resolves the profile again on every start; resolving it here reports a broken
         # profile at install time instead of at its first launch, and before anything is written.

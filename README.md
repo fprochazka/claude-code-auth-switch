@@ -45,7 +45,7 @@ The `cc-auth-switch install` command reads `~/.claude/auth-switch.yaml`, creates
     └── ...
 ```
 
-**Why read the config on every launch?** A change to `env`, `model`, `add_dirs`, `pinned_models` or the secrets file applies at the next launch without a reinstall, and the launch logic lives in Python where it can be tested. It costs two things. Each launch takes about 10 ms longer than the bash wrappers of earlier versions, measured on Linux. A broken config or a broken tool install now stops every `claude-*` command, where static wrappers kept working. `cc-auth-switch start` never falls back to a plain `claude`, because that would start Claude under the wrong account: it prints the config path and the error and exits with a non-zero status. See [`cc-auth-switch start`](#cc-auth-switch-start-profile).
+**Why read the config on every launch?** A change to `env`, `model`, `add_dirs`, `pinned_models`, `default_role`, `roles:` or the secrets file applies at the next launch without a reinstall, and the launch logic lives in Python where it can be tested. It costs two things. Each launch takes about 10 ms longer than the bash wrappers of earlier versions, measured on Linux. A broken config or a broken tool install now stops every `claude-*` command, where static wrappers kept working. `cc-auth-switch start` never falls back to a plain `claude`, because that would start Claude under the wrong account: it prints the config path and the error and exits with a non-zero status. See [`cc-auth-switch start`](#cc-auth-switch-start-profile).
 
 **Why copy some files and symlink others?** Claude Code uses atomic writes (write-to-temp + `fs.rename`) for config files like `settings.json`. This replaces symlinks with regular files, breaking the link. Directory symlinks are unaffected — files created inside a symlinked directory are real files in the target. See [design decisions](docs/Binary-Analysis-and-Design-Decisions.md) for details.
 
@@ -130,6 +130,7 @@ Use the profile commands exactly like `claude`:
 claude-personal                          # Start a session
 claude-work-team --resume                # Resume last session
 claude-work-vertex -p "explain this"     # One-shot prompt
+claude-personal --agent-role dispatcher  # Start with a role, see Roles
 ```
 
 ### Parallel execution
@@ -178,6 +179,52 @@ profiles:
 Under the hood each entry becomes an `ANTHROPIC_DEFAULT_<CLASS>_MODEL` alias-resolution environment variable (`ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_DEFAULT_FABLE_MODEL`) that `cc-auth-switch start` sets. An explicit `env:` entry for the same variable wins over the `pinned_models`-derived value, so you can always override a single class by hand. Any class key outside the four valid ones, or an empty/non-string version, stops the install and every launch of the profile with an error.
 
 These variables only take effect when you launch through the `claude-<name>` launcher. They are set at launch, not written into `settings.json`, so running plain `claude` is unaffected.
+
+### Roles
+
+A role is a named set of launch options: a system prompt file, a model, tools, settings and more. Roles are a top-level `roles:` section, not part of a profile, so `claude-personal --agent-role dispatcher` and `claude-work-team --agent-role dispatcher` start the same role under different accounts.
+
+```yaml
+roles:
+  dispatcher:
+    description: "Runs worker sessions in sibling tmux windows"
+    prompt:
+      file: /home/you/devel/claude-code-plugins/plugins/agent-roles/roles/dispatcher.md
+      mode: append
+    model: opus
+    effort: high
+    permission_mode: auto
+    autocompact: 250000
+    settings:
+      autoCompactEnabled: true
+    allowed_tools: ["Bash(tmux:*)"]
+
+  worker:
+    prompt: { file: /home/you/devel/claude-code-plugins/plugins/agent-roles/roles/worker.md, mode: append }
+
+profiles:
+  work-team:
+    default_role: worker
+```
+
+Pick a role with `--agent-role <name>` or `--agent-role=<name>`. `start` consumes the flag and never passes it to `claude`. A profile's `default_role` applies when the command line has no `--agent-role`, and `--agent-role none` starts without a role even then. A role that the config does not define, in the flag or in `default_role`, stops the launch with an error. Subcommands such as `mcp list` never get a role.
+
+Every key maps to one `claude` flag, see the [configuration reference](#auth-switchyaml). Precedence is profile, then role, then your own flags, the last one winning:
+
+- A single-value flag that you pass yourself, such as `--model`, `--effort` or `--permission-mode`, replaces the role's value. Your `--model` also drops the profile's `model`.
+- List flags add up: the role's `--allowed-tools`, `--add-dir` and the others come next to the profile's and yours. `start` passes each list item as `--flag=value`, because Claude Code's option parser lets `--flag value` take the following words too, including your prompt.
+- The role's `settings`, the [git config attribution](#attribution-from-git-config) and your own `--settings` are deep-merged into one `--settings` JSON, the role over the attribution and yours over both. Lists inside settings, such as `permissions.allow`, are concatenated.
+- `extra_args` go in as written, after the role's other flags and before yours, for any `claude` flag that the role keys do not cover. Write a list option there as `--flag=value`, for the reason above.
+
+No role string that reaches the `claude` command line or the environment may contain a NUL character. `prompt.file` must be an absolute path (`~` is expanded). When the file does not exist, `start` stops with the path instead of starting without the role. `prompt.mode` decides how the text gets into the session:
+
+- `append` (the default) passes `--append-system-prompt-file`. The text comes after Claude Code's own system prompt.
+- `replace` passes `--system-prompt-file`. The text replaces Claude Code's system prompt.
+- `none` passes no flag. A `SessionStart` hook of your own injects the text, reading the path from `FP_CC_AUTH_SWITCH_ROLE_PROMPT`.
+
+The system prompt flags are used instead of a hook by default because Claude Code moves a hook's `additionalContext` above 10,000 characters into a file and keeps only a short preview in context. The system prompt has no such limit, and it survives compaction. If you pass the matching system prompt flag yourself, yours wins: `start` drops the role's flag, sets the prompt mode to `none` so that a hook can inject the role's text, and prints a note.
+
+`start` clears the role variables that it inherits, then sets them for the role it applies, see [Environment variables](#environment-variables). The role's `env` is merged over the profile's.
 
 ### Secrets
 
@@ -336,6 +383,25 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | `profiles.<name>.plansDirectory` | | Path written to the profile's `settings.json` as `plansDirectory`. `~` is expanded at install time. |
 | `profiles.<name>.plugins` | `{}` | Map of `"<plugin>@<marketplace>"` to `true` or `false`, applied on top of the `enabledPlugins` copied from `source_dir`. See [Plugins](#plugins). |
 | `profiles.<name>.share_sessions` | `false` | Boolean. Point the profile's `sessions/` at `~/.claude/sessions`, so that its sessions and those of other sharing profiles and plain `claude` can list and message each other. See [Sharing sessions between profiles](#sharing-sessions-between-profiles). |
+| `profiles.<name>.default_role` | | Name of a role under `roles:` that applies when the command line has no `--agent-role`. See [Roles](#roles). |
+| `roles.<name>.description` | | Human-readable role description |
+| `roles.<name>.prompt.file` | | Absolute path of the role's prompt file. `~` is expanded. A missing file stops the launch. |
+| `roles.<name>.prompt.mode` | `append` | `append` passes `--append-system-prompt-file`, `replace` passes `--system-prompt-file`, `none` passes nothing and leaves the text to a hook. |
+| `roles.<name>.model` | | `--model`. Replaces the profile's `model`; your own `--model` replaces both. |
+| `roles.<name>.effort` | | `--effort` |
+| `roles.<name>.permission_mode` | | `--permission-mode` |
+| `roles.<name>.autocompact` | | `--autocompact`, a number of tokens or `auto` |
+| `roles.<name>.settings` | `{}` | Settings object, deep-merged into the one `--settings` JSON that `start` passes |
+| `roles.<name>.tools` | `[]` | `--tools`. An empty list passes no flag. |
+| `roles.<name>.allowed_tools` | `[]` | `--allowed-tools` |
+| `roles.<name>.disallowed_tools` | `[]` | `--disallowed-tools` |
+| `roles.<name>.add_dirs` | `[]` | `--add-dir`, added to the profile's `add_dirs`. `~` is expanded. |
+| `roles.<name>.plugin_dirs` | `[]` | `--plugin-dir`. `~` is expanded. |
+| `roles.<name>.mcp_config` | `[]` | `--mcp-config`, each a JSON file path or inline JSON |
+| `roles.<name>.strict_mcp_config` | `false` | `--strict-mcp-config` |
+| `roles.<name>.agents` | | `--agents`: a mapping of agents, a JSON string, or the path of a JSON file |
+| `roles.<name>.env` | `{}` | Environment variables, merged over the profile's `env`. Names and values follow the rules of `profiles.<name>.env`. |
+| `roles.<name>.extra_args` | `[]` | More `claude` arguments, passed as written after the role's other flags |
 
 ### `auth-switch.secrets.yaml`
 
@@ -357,19 +423,21 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 cc-auth-switch start [--config PATH] <profile> [claude arguments...]
 ```
 
-The `claude-<name>` launchers run this command with the `--config` path that `install` used. Everything after the profile goes to `claude` unchanged. In this order, `start`:
+The `claude-<name>` launchers run this command with the `--config` path that `install` used. Everything after the profile goes to `claude`, except `--agent-role` and a `--settings` that `start` merges into its own. In this order, `start`:
 
-1. Reads the config and the secrets file, and resolves the profile's `env`, `pinned_models`, `model` and `add_dirs`.
-2. Drops every inherited `CLAUDE_*` and `ANTHROPIC_*` variable, so a launch from inside another Claude Code session does not inherit its account. Then it sets `CLAUDE_CONFIG_DIR`, `FP_CC_AUTH_SWITCH_PROFILE` and the profile's `env`.
-3. Passes the arguments through unchanged when the first one is a Claude Code subcommand such as `mcp`, `auth` or `plugin`, because subcommands reject the session options.
-4. Otherwise adds `--add-dir` for each `add_dirs` entry, `--settings` with the [attribution from git config](#attribution-from-git-config) and your own `--settings` merged into it, the [tmux session name](#session-names-in-tmux) and `--model`. It adds the name and the model only when you did not pass the same option yourself.
-5. Replaces itself with `claude`.
+1. Reads the config and the secrets file, and resolves the profile's `env`, `pinned_models`, `model`, `add_dirs` and `default_role`, and the `roles:` section.
+2. Removes `--agent-role` from the arguments.
+3. Drops every inherited `CLAUDE_*` and `ANTHROPIC_*` variable, and the `FP_CC_AUTH_SWITCH_ROLE*` variables, so a launch from inside another Claude Code session does not inherit its account or its role. Then it sets `CLAUDE_CONFIG_DIR`, `FP_CC_AUTH_SWITCH_PROFILE` and the profile's `env`.
+4. Passes the arguments through when the first one is a Claude Code subcommand such as `mcp`, `auth` or `plugin`, because subcommands reject the session options.
+5. Otherwise picks the [role](#roles), sets its `env` and the role variables, and adds `--add-dir` for each `add_dirs` entry of the profile and the role, `--settings` with the [attribution from git config](#attribution-from-git-config), the role's `settings` and your own `--settings` merged into it, the [tmux session name](#session-names-in-tmux), the role's flags and `--model`. It adds the name, the model and the role's single-value flags only when you did not pass the same option yourself.
+6. Prints its notes to stderr, and replaces itself with `claude`.
 
-A config that is missing, cannot be parsed, or fails validation stops the launch. So does a profile that the config no longer defines, and a secrets file that is invalid, unreadable or not ignored by git. `start` then prints the config path and the error and exits with a non-zero status, without starting Claude. Any other error in `start` also stops the launch, with one line that names the profile, the config path and the error. Fix the config and launch again; a reinstall is only needed for the settings that `install` writes into the profile directory.
+A config that is missing, cannot be parsed, or fails validation stops the launch. So does a profile that the config no longer defines, a secrets file that is invalid, unreadable or not ignored by git, an unknown `--agent-role`, a role whose prompt file does not exist, and a `--settings` file that `start` cannot read. `start` then prints the config path and the error and exits with a non-zero status, without starting Claude. Any other error in `start` also stops the launch, with one line that names the profile, the config path and the error. Fix the config and launch again; a reinstall is only needed for the settings that `install` writes into the profile directory.
 
 | Flag | Description |
 |------|-------------|
 | `--config PATH` | Config file path, as for `install` |
+| `--agent-role NAME`, `--agent-role=NAME` | Apply the role `NAME` from `roles:`, or no role with `none`. Goes after the profile, among the `claude` arguments. See [Roles](#roles). |
 
 ### `cc-auth-switch rollback-sessions <profile>`
 
@@ -384,7 +452,7 @@ A config that is missing, cannot be parsed, or fails validation stops the launch
 | **Copied** | `settings.json`, `settings.local.json`, `keybindings.json`, and all top-level `*.md` files (e.g. `CLAUDE.md`) | Copied on first install. Use `--sync` to refresh from source. |
 | **Symlinked** | `commands/`, `skills/`, `agents/`, `plugins/`, `projects/`, `scripts/` | Always symlinked. Changes are shared across all profiles. |
 | **Patched** | `settings.json` (`attribution`, `plansDirectory`, `hooks.SessionStart`) | Set from profile config on every install. The installer creates the file when `source_dir` has none. See [Profile start log](#profile-start-log) for the hook. |
-| **Per launch** | `--settings` (`attribution`) | Read from git config for the start directory every time a launcher starts Claude. Never written to disk. See [Attribution from git config](#attribution-from-git-config). |
+| **Per launch** | `--settings` (`attribution`, the role's `settings`) | Read from git config for the start directory and from the role every time a launcher starts Claude. Never written to disk. See [Attribution from git config](#attribution-from-git-config) and [Roles](#roles). |
 | **Synced on every install** | `settings.json` (`enabledPlugins`, `extraKnownMarketplaces`) | Copied whole from `source_dir`'s `settings.json`, then the profile's `plugins:` overrides are applied. See [Plugins](#plugins). |
 | **Selectively synced** | `.claude.json` (`mcpServers`) | Only the `mcpServers` key is synced from `~/.claude.json` on every install. Other keys in `.claude.json` are per-profile state. |
 | **Shared on request** | `sessions/` | A real per-profile directory by default. With `share_sessions: true`, a symlink to `~/.claude/sessions`. |
@@ -395,7 +463,7 @@ A config that is missing, cannot be parsed, or fails validation stops the launch
 ```bash
 # Added or removed a profile, or changed attribution, plansDirectory, plugins or share_sessions → re-run install
 # (also syncs mcpServers from ~/.claude.json into each profile).
-# env, model, add_dirs, pinned_models and the secrets file apply at the next launch without it.
+# env, model, add_dirs, pinned_models, default_role, roles and the secrets file apply at the next launch without it.
 cc-auth-switch install
 
 # Changed ~/.claude/settings.json and want profiles to pick it up
@@ -475,6 +543,9 @@ Not supported. The launchers are bash scripts.
 |----------|---------|-------------|
 | `CLAUDE_CONFIG_DIR` | `~/.claude-profiles/personal` | Points Claude Code at the profile's isolated config directory |
 | `FP_CC_AUTH_SWITCH_PROFILE` | `personal` | The active profile name — useful in [status line scripts](https://docs.anthropic.com/en/docs/claude-code/settings#status-bar) and hooks |
+| `FP_CC_AUTH_SWITCH_ROLE` | `dispatcher` | The [role](#roles) of this start. Unset when no role applies. |
+| `FP_CC_AUTH_SWITCH_ROLE_PROMPT` | `/home/you/roles/dispatcher.md` | The absolute path of the role's `prompt.file`. Unset when the role has no prompt. |
+| `FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE` | `append` | `append` or `replace`: the prompt is already in the system prompt. `none`: a hook should inject it. Unset when the role has no prompt. |
 
 The `FP_CC_AUTH_SWITCH_PROFILE` variable is intentionally outside the `CLAUDE_*`/`ANTHROPIC_*` namespace so a nested launch does not drop it together with the inherited `CLAUDE_*`/`ANTHROPIC_*` variables. You can use it in your `statusLine` command to display which profile is active:
 
@@ -485,7 +556,7 @@ if [ -n "${FP_CC_AUTH_SWITCH_PROFILE:-}" ]; then
 fi
 ```
 
-The [profile start log](#profile-start-log) also records three role variables when they are set: `FP_CC_AUTH_SWITCH_ROLE` (a role name), `FP_CC_AUTH_SWITCH_ROLE_PROMPT` (the absolute path of the role's prompt file) and `FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE` (`append`, `replace` or `none`). Set them by hand before you run `claude` to record a role for a session.
+`start` always clears the three role variables before it sets them, so a launcher run from another session's Bash does not inherit that session's role. Hooks should read these variables to learn the role of the current start: Claude Code does not order `SessionStart` hooks from different sources, so another hook may run before the [profile start log](#profile-start-log) has the line for this start. Without a launcher, you can set the variables by hand before you run `claude`.
 
 ## Limitations
 
@@ -560,7 +631,7 @@ The tool has no releases: no version bumps, no tags, no PyPI package and no GitH
 Users then update in two steps:
 
 1. Update the tool. An install from GitHub updates with `uv tool upgrade claude-code-auth-switch`, or with `uv tool install --reinstall git+https://github.com/fprochazka/claude-code-auth-switch.git`. An editable install updates when you pull its checkout. For an editable install, `uv tool upgrade` only refreshes the dependencies.
-2. Run `cc-auth-switch install`. It regenerates the launchers and patches each profile's `settings.json`, so they match the new code. Every launcher runs `cc-auth-switch start`, and the `SessionStart` hook runs `cc-auth-switch session-start`, so a change to either takes effect at the next launch without this step. That covers how `start` reads the config and builds the environment and the arguments: `env`, secrets, `pinned_models`, `model`, `add_dirs`, the git config attribution and the tmux name. A change to what `install` writes still needs this step: the launcher line, the patches to the profiles' `settings.json` (`attribution`, `plansDirectory`, the plugin keys, the hook), the copied and symlinked files, and `sessions/` sharing.
+2. Run `cc-auth-switch install`. It regenerates the launchers and patches each profile's `settings.json`, so they match the new code. Every launcher runs `cc-auth-switch start`, and the `SessionStart` hook runs `cc-auth-switch session-start`, so a change to either takes effect at the next launch without this step. That covers how `start` reads the config and builds the environment and the arguments: `env`, secrets, `pinned_models`, `model`, `add_dirs`, roles, the git config attribution and the tmux name. A change to what `install` writes still needs this step: the launcher line, the patches to the profiles' `settings.json` (`attribution`, `plansDirectory`, the plugin keys, the hook), the copied and symlinked files, and `sessions/` sharing.
 
 Check the output of `cc-auth-switch install`: it lists what changed under each profile and the path of every backup it made, see [Re-syncing after config changes](#re-syncing-after-config-changes).
 

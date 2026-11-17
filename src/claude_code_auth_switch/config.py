@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -22,6 +23,14 @@ GIT_TIMEOUT_SECONDS = 5
 # Model classes whose alias (sonnet/opus/haiku/fable) can be pinned to a specific
 # version id via the corresponding ANTHROPIC_DEFAULT_<CLASS>_MODEL env var.
 VALID_MODEL_CLASSES = ("sonnet", "opus", "haiku", "fable")
+
+
+# Names that bash's `export NAME=...` accepted; the bash wrappers of earlier versions stopped at any other.
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+class ConfigError(Exception):
+    """The config does not describe a launchable profile or role."""
 
 
 def read_yaml(path: Path) -> object:

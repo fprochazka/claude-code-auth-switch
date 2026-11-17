@@ -5,8 +5,8 @@
 #   - Config dir: <profiles_dir>/<name>/
 #   - Launcher: <bin_dir>/claude-<name>, which runs `cc-auth-switch start <name>`
 #
-# Every launch reads this file again, so env, model, add_dirs and pinned_models apply at the next
-# launch. Re-run `cc-auth-switch install` after adding or removing a profile or changing the keys
+# Every launch reads this file again, so env, model, add_dirs, pinned_models, default_role and roles
+# apply at the next launch. Re-run `cc-auth-switch install` after adding or removing a profile or changing the keys
 # that it writes into the profile directory: attribution, plansDirectory, plugins and share_sessions.
 #
 # Secret env values belong in the sibling file auth-switch.secrets.yaml, which must be
@@ -28,6 +28,8 @@ profiles:
   work-team:
     description: "Company team subscription"
     model: sonnet
+    # Role from roles: below when the command line has no --agent-role. `--agent-role none` turns it off.
+    default_role: worker
     # Pin what the sonnet/opus/haiku/fable aliases resolve to (alias -> specific version id)
     pinned_models:
       sonnet: claude-sonnet-4-5-20250929
@@ -59,3 +61,33 @@ profiles:
       CLAUDE_CODE_USE_VERTEX: "1"
       ANTHROPIC_VERTEX_PROJECT_ID: "<your-project-id>"
       CLOUD_ML_REGION: "europe-west1"
+
+# Roles: named sets of launch options, applied on top of any profile with `claude-<profile> --agent-role <name>`.
+# Precedence: profile, then role, then your own command-line flags. List flags add up; settings are deep-merged
+# into one --settings JSON together with the git config attribution and your own --settings.
+roles:
+  dispatcher:
+    description: "Runs worker sessions in sibling tmux windows"
+    prompt:
+      file: /home/you/devel/claude-code-plugins/plugins/agent-roles/roles/dispatcher.md   # absolute path
+      mode: append                     # append -> --append-system-prompt-file, replace -> --system-prompt-file, none -> left to a hook
+    model: opus                        # --model, replaces the profile's model
+    effort: high                       # --effort
+    permission_mode: auto              # --permission-mode
+    autocompact: 250000                # --autocompact
+    settings:                          # merged into the one --settings JSON
+      autoCompactEnabled: true
+    tools: []                          # --tools, an empty list passes no flag
+    allowed_tools: []                  # --allowed-tools
+    disallowed_tools: []               # --disallowed-tools
+    add_dirs: []                       # --add-dir, added to the profile's
+    plugin_dirs: []                    # --plugin-dir
+    mcp_config: []                     # --mcp-config
+    strict_mcp_config: false           # --strict-mcp-config
+    agents: null                       # --agents: a mapping, a JSON string or a file path
+    env: {}                            # merged over the profile's env
+    extra_args: []                     # any other claude arguments, as written; list options as --flag=value
+
+  worker:
+    prompt: { file: /home/you/devel/claude-code-plugins/plugins/agent-roles/roles/worker.md, mode: append }
+    settings: { autoCompactEnabled: true }

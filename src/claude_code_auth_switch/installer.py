@@ -19,7 +19,7 @@ import stat
 import sys
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -743,7 +743,7 @@ def install(config_arg: Path | None, sync: bool, force: bool) -> None:
             sys.exit(0)
 
     source_claude_json_path = Path.home() / ".claude.json"
-    backup_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     backups: list[ProfileBackup] = []
     active_script_names: set[str] = set()
 

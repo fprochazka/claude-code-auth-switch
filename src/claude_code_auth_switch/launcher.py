@@ -418,11 +418,20 @@ def project_dir_names(cwd: str) -> list[str]:
 def recorded_start_of(config_dir: Path, session_id: str, cwd: str) -> dict | None:
     from claude_code_auth_switch.session_start import LOG_NAME, read_newest_line
 
-    projects = config_dir / "projects"
-    for pattern in [*project_dir_names(cwd), "*"]:
-        for log in projects.glob(f"{pattern}/{session_id}/{LOG_NAME}"):
-            return read_newest_line(log)
-    return None
+    # The cwd does not narrow the search: a resume can start anywhere.
+    # A session that moved between directories, or a copy of it, can have a log in more than one
+    # project directory, so the newest line by ts across all of them wins.
+    newest: dict | None = None
+    for log in (config_dir / "projects").glob(f"*/{session_id}/{LOG_NAME}"):
+        line = read_newest_line(log)
+        if line is not None and (newest is None or line_ts(line) > line_ts(newest)):
+            newest = line
+    return newest
+
+
+def line_ts(line: dict) -> int:
+    ts = line.get("ts")
+    return ts if isinstance(ts, int) and not isinstance(ts, bool) else -1
 
 
 def newest_start_in(config_dir: Path, cwd: str) -> dict | None:

@@ -468,6 +468,13 @@ def test_recorded_start_reads_the_newest_valid_line_from_any_project(tmp_path):
     assert launcher.recorded_start_of(tmp_path, "1b6f2c1e-1111-4222-8333-444455556666", "/work") is None
 
 
+def test_recorded_start_picks_the_newest_line_by_ts_across_project_dirs(tmp_path):
+    for project, ts, role in (("-a", 300, "worker"), ("-b", 500, "dispatcher"), ("-c", None, "hooked")):
+        write_log(tmp_path / "projects" / project / SESSION / "auth-switch-profile-starts.jsonl", json.dumps({"v": 1, "ts": ts, "role": role}))
+
+    assert launcher.recorded_start_of(tmp_path, SESSION, "/a")["role"] == "dispatcher"
+
+
 def test_newest_start_follows_claudes_project_dir_naming(tmp_path):
     cwd = "/home/u/devel/my_repo.git"
     project = tmp_path / "projects" / "-home-u-devel-my-repo-git"

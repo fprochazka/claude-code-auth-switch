@@ -11,7 +11,12 @@ dependencies = ["pyyaml>=6"]
 cc-auth-switch = "claude_code_auth_switch.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "mypy>=1.15",
+    "pytest>=8",
+    "ruff>=0.11.0",
+    "types-pyyaml>=6.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -19,3 +24,53 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
+# The formatter keeps code within line-length. What it leaves longer are messages, help texts, comments and the
+# shell and Python templates in tests, and rewrapping those by hand buys nothing.
+#
+# SIM114 merges if/elif arms with the same body into one condition, which turns two readable cases, such as the
+# option kinds in claude_options.scan(), into one `a and b or c and d` expression.
+ignore = ["E501", "SIM114"]
+
+[tool.ruff.lint.isort]
+# Test helpers that the tests import as top-level modules, from the tests directory on sys.path.
+known-local-folder = ["conftest", "legacy_wrapper"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+strict = true
+python_version = "3.10"
+files = ["src", "tests"]
+
+# Test functions and fixtures stay unannotated: pytest injects fixtures by name, and annotating some 220 of them
+# adds noise without catching bugs. Their bodies are still type checked. tests/ has no __init__.py, so mypy names
+# each test file as a top-level module, and a new test file has to be added here.
+[[tool.mypy.overrides]]
+module = [
+    "conftest",
+    "legacy_wrapper",
+    "test_claude_options",
+    "test_foreign_dirs",
+    "test_git_attribution",
+    "test_launcher",
+    "test_plugins",
+    "test_profile_writes",
+    "test_roles",
+    "test_sessions",
+    "test_session_start",
+    "test_start_matches_legacy_wrapper",
+    "test_sync_backups",
+    "test_wrapper",
+]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+check_untyped_defs = true

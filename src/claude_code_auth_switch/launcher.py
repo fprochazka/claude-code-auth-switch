@@ -11,6 +11,7 @@ It runs no processes and reads no files itself, so tests can call it directly.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -383,15 +384,22 @@ def project_dir_names(cwd: str) -> list[str]:
 def recorded_start_of(config_dir: Path, session_id: str, cwd: str) -> dict | None:
     from claude_code_auth_switch.session_start import LOG_NAME, read_newest_line
 
-    # The cwd does not narrow the search: a resume can start anywhere.
-    # A session that moved between directories, or a copy of it, can have a log in more than one
-    # project directory, so the newest line by ts across all of them wins.
-    newest: dict | None = None
+    # A resume can start anywhere, and a session that moved between directories, or a copy of it, can
+    # have a log in more than one project directory. The newest line by ts wins. Without a ts, or on a
+    # tie, the log in the start directory's project directory wins, then the log written last.
+    cwd_patterns = project_dir_names(cwd)
+    ranked: list[tuple[tuple[int, bool, float], dict]] = []
     for log in (config_dir / "projects").glob(f"*/{session_id}/{LOG_NAME}"):
         line = read_newest_line(log)
-        if line is not None and (newest is None or line_ts(line) > line_ts(newest)):
-            newest = line
-    return newest
+        if line is None:
+            continue
+        in_cwd = any(fnmatch.fnmatchcase(log.parent.parent.name, pattern) for pattern in cwd_patterns)
+        try:
+            mtime = log.stat().st_mtime
+        except OSError:
+            mtime = float("-inf")
+        ranked.append(((line_ts(line), in_cwd, mtime), line))
+    return max(ranked, key=lambda entry: entry[0])[1] if ranked else None
 
 
 def line_ts(line: dict) -> int:

@@ -512,6 +512,17 @@ def test_recorded_start_picks_the_newest_line_by_ts_across_project_dirs(tmp_path
     assert launcher.recorded_start_of(tmp_path, SESSION, "/a")["role"] == "dispatcher"
 
 
+@pytest.mark.parametrize("ts", [None, 500])
+def test_without_a_newer_ts_the_start_directorys_project_wins_then_the_newest_log(tmp_path, ts):
+    for project, mtime in (("-a", 1000), ("-b", 3000), ("-c", 2000)):
+        log = tmp_path / "projects" / project / SESSION / "auth-switch-profile-starts.jsonl"
+        write_log(log, json.dumps({"v": 1, "ts": ts, "role": project}))
+        os.utime(log, (mtime, mtime))
+
+    assert launcher.recorded_start_of(tmp_path, SESSION, "/a")["role"] == "-a"
+    assert launcher.recorded_start_of(tmp_path, SESSION, "/elsewhere")["role"] == "-b"
+
+
 def test_newest_start_follows_claudes_project_dir_naming(tmp_path):
     cwd = "/home/u/devel/my_repo.git"
     project = tmp_path / "projects" / "-home-u-devel-my-repo-git"

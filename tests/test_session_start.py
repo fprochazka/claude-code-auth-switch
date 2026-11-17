@@ -77,6 +77,15 @@ def test_hook_records_the_role_from_the_environment(hook_env):
     )
 
 
+def test_hook_records_a_start_without_a_role_as_none(hook_env):
+    env, payload, profile_dir, log = hook_env
+
+    run_hook({**env, "FP_CC_AUTH_SWITCH_ROLE": "none", "CLAUDE_PID": "4242"}, json.dumps(payload))
+
+    [line] = read_lines(log)
+    assert (line["role"], line["role_prompt"], line["role_prompt_mode"]) == ("none", None, None)
+
+
 def test_hook_appends_one_line_per_start(hook_env):
     env, payload, profile_dir, log = hook_env
 

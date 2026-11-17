@@ -199,6 +199,12 @@ def test_default_role_must_name_a_defined_role():
     assert resolve_profile({**config, "roles": {"dispatcher": {}}}, {}, Path("/p"), "work").default_role == "dispatcher"
 
 
+def test_default_role_none_needs_no_role_of_that_name():
+    config = {"profiles": {"work": {"default_role": "none"}}}
+
+    assert resolve_profile(config, {}, Path("/p"), "work").default_role == "none"
+
+
 # Launch
 
 
@@ -355,7 +361,7 @@ def test_inherited_role_variables_are_cleared_without_a_role():
     for args in ([], ["--agent-role", "none"], ["--agent-role", "bare"], ["mcp", "list"]):
         env = build_launch(PROFILE, args, context(inherited), ROLES).env
         assert {key: env.get(key) for key in ROLE_ENV} == {
-            "FP_CC_AUTH_SWITCH_ROLE": "bare" if "bare" in args else None,
+            "FP_CC_AUTH_SWITCH_ROLE": "bare" if "bare" in args else "none" if "none" in args else None,
             "FP_CC_AUTH_SWITCH_ROLE_PROMPT": None,
             "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": None,
         }, args
@@ -370,7 +376,31 @@ def test_default_role_applies_without_agent_role_and_none_turns_it_off():
         == "dispatcher"
     )
     none = build_launch(profile, ["--agent-role", "none"], context(), ROLES)
-    assert ("FP_CC_AUTH_SWITCH_ROLE" not in none.env, none.argv) == (True, [])
+    assert ({key: none.env.get(key) for key in ROLE_ENV}, none.argv) == (
+        {
+            "FP_CC_AUTH_SWITCH_ROLE": "none",
+            "FP_CC_AUTH_SWITCH_ROLE_PROMPT": None,
+            "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": None,
+        },
+        [],
+    )
+
+
+def test_default_role_none_starts_without_a_role_but_with_the_marker():
+    profile = Profile(name="work", config_dir=Path("/p"), default_role="none")
+
+    launch = build_launch(profile, [], context(), ROLES)
+    worker = build_launch(profile, ["--agent-role", "worker"], context(), ROLES)
+
+    assert ({key: launch.env.get(key) for key in ROLE_ENV}, launch.argv) == (
+        {
+            "FP_CC_AUTH_SWITCH_ROLE": "none",
+            "FP_CC_AUTH_SWITCH_ROLE_PROMPT": None,
+            "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": None,
+        },
+        [],
+    )
+    assert worker.env["FP_CC_AUTH_SWITCH_ROLE"] == "worker"
 
 
 def test_agent_role_never_reaches_claude_and_subcommands_get_no_role():
@@ -518,7 +548,17 @@ def test_launcher_applies_the_default_role(role_launch):
             "ROLE_ONLY": "1",
         },
     }
-    assert json.loads(run("--agent-role", "none").stdout)["env"]["FP_CC_AUTH_SWITCH_ROLE"] is None
+    none = json.loads(run("--agent-role", "none").stdout)
+    assert (none["argv"], none["env"]) == (
+        [],
+        {
+            "FP_CC_AUTH_SWITCH_PROFILE": "work",
+            "FP_CC_AUTH_SWITCH_ROLE": "none",
+            "FP_CC_AUTH_SWITCH_ROLE_PROMPT": None,
+            "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": None,
+            "ROLE_ONLY": None,
+        },
+    )
 
 
 def test_launcher_refuses_an_unknown_role_and_a_missing_prompt_file(role_launch):
@@ -608,6 +648,45 @@ def test_resume_of_a_session_without_role_or_log_ignores_the_default_role():
         assert ("FP_CC_AUTH_SWITCH_ROLE" not in launch.env, launch.notes) == (True, ()), recorded
 
 
+@pytest.mark.parametrize("args", [["--resume", SESSION], ["--session-id", SESSION]])
+def test_resume_of_a_session_that_ran_without_a_role_keeps_the_marker_over_the_default_role(args):
+    profile = dataclasses.replace(PROFILE, default_role="worker")
+
+    launch = build_launch(profile, args, resume_context(recorded={"v": 1, "role": "none"})[0], ROLES)
+
+    assert ({key: launch.env.get(key) for key in ROLE_ENV}, launch.notes) == (
+        {
+            "FP_CC_AUTH_SWITCH_ROLE": "none",
+            "FP_CC_AUTH_SWITCH_ROLE_PROMPT": None,
+            "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": None,
+        },
+        (),
+    )
+    assert launch.argv == ["--add-dir=/profile dir", "--model", "sonnet", *args]
+
+
+def test_resume_compares_a_recorded_none_as_no_role():
+    ctx = resume_context(recorded={"role": "none"})[0]
+
+    same = build_launch(PROFILE, ["--agent-role", "none", "-r", SESSION], ctx, ROLES)
+    other = build_launch(PROFILE, ["--agent-role", "worker", "-r", SESSION], ctx, ROLES)
+
+    assert ("--system-prompt-snapshot" in same.argv, same.notes, same.env["FP_CC_AUTH_SWITCH_ROLE"]) == (
+        False,
+        (),
+        "none",
+    )
+    assert other.notes == (
+        f"resuming session {SESSION}, which ran as no role, with role 'worker': --system-prompt-snapshot off sends the new system prompt, at the cost of prompt cache reuse for this run",
+    )
+
+
+def test_continue_after_a_session_without_a_role_prints_no_notice():
+    launch = build_launch(PROFILE, ["-c"], resume_context(newest={"role": "none"})[0], ROLES)
+
+    assert ("FP_CC_AUTH_SWITCH_ROLE" in launch.env, launch.notes) == (False, ())
+
+
 def test_session_id_of_a_new_session_keeps_the_default_role():
     profile = dataclasses.replace(PROFILE, default_role="worker")
 
@@ -639,7 +718,7 @@ def test_resume_with_another_role_turns_the_snapshot_off(agent_role, recorded, l
 
     assert launch.argv[launch.argv.index("--system-prompt-snapshot") :][:2] == ["--system-prompt-snapshot", "off"]
     assert launch.argv[-2:] == ["--resume", SESSION]
-    assert launch.env.get("FP_CC_AUTH_SWITCH_ROLE") == (None if agent_role == "none" else agent_role)
+    assert launch.env.get("FP_CC_AUTH_SWITCH_ROLE") == agent_role
     assert launch.notes == (
         f"resuming session {SESSION}, {label}: --system-prompt-snapshot off sends the new system prompt, at the cost of prompt cache reuse for this run",
     )

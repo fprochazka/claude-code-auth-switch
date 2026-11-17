@@ -119,7 +119,7 @@ class Profile:
     env: dict[str, str] = field(default_factory=dict)
     add_dirs: tuple[Path, ...] = ()
     model: str | None = None
-    # Role applied when the command line has no --agent-role.
+    # Role applied when the command line has no --agent-role, or NO_ROLE.
     default_role: str | None = None
 
 
@@ -337,7 +337,8 @@ def build_launch(
 
     notes: list[str] = []
     requested_name = None if requested_role == NO_ROLE else requested_role
-    role_name = requested_name if requested_role is not None else profile.default_role
+    # A role name, NO_ROLE for an explicit "no role", or None when nothing chose one.
+    role_name = requested_role if requested_role is not None else profile.default_role
     # The role a resumed session ran as. Its system prompt is recorded on the first request and sent
     # again on every resume, so a different role needs the snapshot off to reach the model.
     snapshot_args: list[str] = []
@@ -357,21 +358,23 @@ def build_launch(
             recorded = recorded if recorded is not None else {}
         recorded_role = recorded.get("role") if recorded is not None else None
         recorded_role = recorded_role if isinstance(recorded_role, str) and recorded_role else None
+        # The start log records an explicit "no role" as NO_ROLE, so that a resume keeps it.
+        recorded_name = None if recorded_role == NO_ROLE else recorded_role
 
         if requested_role is None:
             role_name = None
             if kind == "id" and recorded_role:
-                if recorded_role in roles:
+                if recorded_role == NO_ROLE or recorded_role in roles:
                     role_name = recorded_role
                 else:
                     notes.append(
                         f"warning: session {session_id} ran as role '{recorded_role}', which the config no longer defines; resuming it without a role"
                     )
-            elif kind == "continue" and recorded_role:
+            elif kind == "continue" and recorded_name:
                 notes.append(
-                    f"--continue starts without a role; the newest session here ran as role '{recorded_role}', add --agent-role {recorded_role} to keep it"
+                    f"--continue starts without a role; the newest session here ran as role '{recorded_name}', add --agent-role {recorded_name} to keep it"
                 )
-        elif recorded is None or requested_name != recorded_role:
+        elif recorded is None or requested_name != recorded_name:
             target = (
                 f"session {session_id}"
                 if kind == "id"
@@ -379,15 +382,18 @@ def build_launch(
                 if kind == "continue"
                 else "the picked session"
             )
-            was = f", which ran as {role_label(recorded_role)}," if recorded is not None else ""
+            was = f", which ran as {role_label(recorded_name)}," if recorded is not None else ""
             if not has_option(args, SNAPSHOT_FLAG):
                 snapshot_args = [SNAPSHOT_FLAG, "off"]
                 notes.append(
                     f"resuming {target}{was} with {role_label(requested_name)}: {SNAPSHOT_FLAG} off sends the new system prompt, at the cost of prompt cache reuse for this run"
                 )
-    role = roles[role_name] if role_name else None
+    role = roles[role_name] if role_name and role_name != NO_ROLE else None
 
     prompt_args: list[str] = []
+    if role_name == NO_ROLE:
+        # Tells hooks, such as the agent-roles plugin's, not to inject a default role of their own.
+        env[ROLE_ENV] = NO_ROLE
     if role is not None:
         env.update(role.env)
         if role.env:
@@ -550,8 +556,10 @@ def resolve_profile(
     if default_role is not None:
         if not isinstance(default_role, str) or not default_role:
             raise ConfigError(f"profile '{name}': 'default_role' must be a role name")
-        if default_role not in resolve_roles(config):
-            raise ConfigError(f"profile '{name}': default_role '{default_role}' is not defined under roles:")
+        if default_role != NO_ROLE and default_role not in resolve_roles(config):
+            raise ConfigError(
+                f"profile '{name}': default_role '{default_role}' is not defined under roles: (or '{NO_ROLE}' for no role)"
+            )
 
     model = profile_config.get("model") or None
     if model is not None and "\0" in str(model):

@@ -28,7 +28,7 @@ profiles:
   work-team:
     description: "Company team subscription"
     model: sonnet
-    # Role from roles: below when the command line has no --agent-role. `--agent-role none` turns it off.
+    # Role from roles: below when the command line has no --agent-role, or `none` for no role. `--agent-role none` turns it off.
     default_role: worker
     # Pin what the sonnet/opus/haiku/fable aliases resolve to (alias -> specific version id)
     pinned_models:

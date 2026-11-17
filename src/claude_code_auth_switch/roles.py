@@ -17,7 +17,9 @@ from typing import Any
 from claude_code_auth_switch.claude_options import BOOLEAN, CANONICAL, CLAUDE_VERSION, KIND
 from claude_code_auth_switch.config import ENV_NAME, ConfigError
 
-# `--agent-role none` starts without a role, also when the profile has a default_role.
+# `--agent-role none` starts without a role, also when the profile has a default_role, and `default_role: none`
+# makes that the profile's default. start then sets FP_CC_AUTH_SWITCH_ROLE=none, so that a hook with a default
+# role of its own injects nothing.
 NO_ROLE = "none"
 PROMPT_MODES = ("append", "replace", "none")
 

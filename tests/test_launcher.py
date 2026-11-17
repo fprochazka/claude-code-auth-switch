@@ -1,3 +1,4 @@
+import dataclasses
 import subprocess
 import sys
 from pathlib import Path
@@ -6,7 +7,7 @@ import pytest
 
 from claude_code_auth_switch import launcher
 from claude_code_auth_switch.installer import MARKER, cleanup_stale_scripts, generate_launcher_script
-from claude_code_auth_switch.launcher import LaunchContext, Profile, build_launch, merge_settings, parse_args
+from claude_code_auth_switch.launcher import LaunchContext, LaunchError, Profile, build_launch, merge_settings, parse_args
 from legacy_wrapper import generate_wrapper_script
 
 PROFILE = Profile(name="work", config_dir=Path("/profiles/work"), env={"A": "$HOME `x` \"q\""}, add_dirs=(Path("/repo dir"),), model="sonnet")
@@ -48,13 +49,51 @@ def test_profile_env_wins_over_the_variables_the_launcher_sets():
     assert build_launch(profile, [], context()[0]).env["CLAUDE_CONFIG_DIR"] == "/custom"
 
 
-def test_user_settings_skip_the_attribution_lookup_and_resume_skips_tmux():
-    ctx, calls = context({"TMUX": "/t", "TMUX_PANE": "%7"}, {"attribution": {"pr": ""}})
+def test_resume_skips_tmux():
+    ctx, calls = context({"TMUX": "/t", "TMUX_PANE": "%7"})
 
-    launch = build_launch(PROFILE, ["--settings=/s.json", "--resume=abc"], ctx)
+    launch = build_launch(PROFILE, ["--resume=abc"], ctx)
 
-    assert calls == []
-    assert launch.argv == ["--add-dir", "/repo dir", "--settings=/s.json", "--resume=abc", "--model", "sonnet"]
+    assert calls == [("git", "/work")]
+    assert launch.argv == ["--add-dir", "/repo dir", "--resume=abc", "--model", "sonnet"]
+
+
+def test_the_last_user_settings_is_merged_over_the_attribution_into_one_settings():
+    ctx, _ = context(attribution={"attribution": {"commit": "git", "pr": "git"}, "permissions": {"allow": ["Read"]}})
+
+    launch = build_launch(PROFILE, ["--settings", '{"ignored": 1}', "-p", "hi", '--settings={"attribution": {"pr": "user"}, "permissions": {"allow": ["Read", "Bash"]}}'], ctx)
+
+    assert launch.argv == [
+        "--add-dir", "/repo dir",
+        "--settings", '{"attribution": {"commit": "git", "pr": "user"}, "permissions": {"allow": ["Read", "Bash"]}}',
+        "-p", "hi", "--model", "sonnet",
+    ]
+
+
+def test_user_settings_file_is_read_relative_to_the_start_directory(tmp_path):
+    (tmp_path / "own.json").write_text('{"model": "x"}')
+    ctx, _ = context(attribution={"attribution": {"pr": ""}})
+    ctx = dataclasses.replace(ctx, cwd=str(tmp_path))
+
+    assert build_launch(PROFILE, ["--settings", "own.json"], ctx).argv[2:4] == ["--settings", '{"attribution": {"pr": ""}, "model": "x"}']
+
+
+@pytest.mark.parametrize("value, error", [("missing.json", "cannot read"), ("{not json", "not valid JSON"), ("list.json", "must hold a JSON object")])
+def test_unreadable_user_settings_stops_the_launch(tmp_path, value, error):
+    (tmp_path / "list.json").write_text("[1]")
+    with pytest.raises(LaunchError, match=error):
+        launcher.read_settings_value(value, str(tmp_path))
+
+
+def test_user_settings_pass_unchanged_when_start_has_no_settings_of_its_own():
+    ctx, _ = context()
+
+    assert build_launch(PROFILE, ["--settings=/s.json", "--", "--settings", "x"], ctx).argv == ["--add-dir", "/repo dir", "--settings=/s.json", "--", "--settings", "x", "--model", "sonnet"]
+
+
+def test_pop_option_stops_at_double_dash_and_leaves_a_flag_without_value():
+    assert launcher.pop_option(["--a", "1", "--a=2", "--", "--a", "3"], "--a") == (["1", "2"], ["--", "--a", "3"])
+    assert launcher.pop_option(["-p", "--a"], "--a") == ([], ["-p", "--a"])
 
 
 def test_subcommand_gets_only_the_environment():
@@ -65,9 +104,9 @@ def test_subcommand_gets_only_the_environment():
     assert (launch.argv, calls, launch.env["CLAUDE_CONFIG_DIR"]) == (["mcp", "list"], [], "/profiles/work")
 
 
-def test_merge_settings_merges_nested_objects_and_later_layers_win():
-    assert merge_settings({"attribution": {"commit": "a", "pr": "b"}, "x": 1}, None, {"attribution": {"pr": "c"}, "x": {"y": 2}}) == {
-        "attribution": {"commit": "a", "pr": "c"}, "x": {"y": 2},
+def test_merge_settings_merges_nested_objects_concatenates_lists_and_later_layers_win():
+    assert merge_settings({"attribution": {"commit": "a", "pr": "b"}, "x": 1, "l": [1, 2]}, None, {"attribution": {"pr": "c"}, "x": {"y": 2}, "l": [2, 3]}) == {
+        "attribution": {"commit": "a", "pr": "c"}, "x": {"y": 2}, "l": [1, 2, 3],
     }
 
 

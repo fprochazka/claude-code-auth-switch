@@ -233,7 +233,7 @@ Precedence, per key: git config wins over the profile's `attribution` in `auth-s
 
 The attribution is fixed when Claude starts. A session started in a personal repository keeps the personal attribution even when it later works in a company directory added with `--add-dir`. Start Claude in the directory whose attribution you want.
 
-Subcommands such as `claude-personal mcp list` do not get the setting. If you pass your own `--settings` to a launcher, the launcher does not add its own, because Claude Code keeps only the last `--settings` flag instead of merging them. Put the attribution into your settings file when you need both.
+Subcommands such as `claude-personal mcp list` do not get the setting. Claude Code keeps only the last `--settings` flag instead of merging them, so `start` passes a single `--settings` JSON. When you pass your own `--settings` to a launcher, as inline JSON or as the path of a JSON file, `start` reads it and deep-merges it last, so your keys win per key. Lists are concatenated without duplicates, as Claude Code merges its own settings sources. When you pass several, `start` uses the last one, as Claude Code would. A file that cannot be read or is not a JSON object stops the launch with the path and the error. When `start` has no settings of its own for the launch, it passes your `--settings` unchanged and does not read it.
 
 If git cannot read the config, or a git call does not answer within 5 seconds, the launcher prints a one-line warning and starts Claude without the git config attribution.
 
@@ -361,7 +361,7 @@ The `claude-<name>` launchers run this command with the `--config` path that `in
 1. Reads the config and the secrets file, and resolves the profile's `env`, `pinned_models`, `model` and `add_dirs`.
 2. Drops every inherited `CLAUDE_*` and `ANTHROPIC_*` variable, so a launch from inside another Claude Code session does not inherit its account. Then it sets `CLAUDE_CONFIG_DIR`, `FP_CC_AUTH_SWITCH_PROFILE` and the profile's `env`.
 3. Passes the arguments through unchanged when the first one is a Claude Code subcommand such as `mcp`, `auth` or `plugin`, because subcommands reject the session options.
-4. Otherwise adds `--add-dir` for each `add_dirs` entry, `--settings` with the [attribution from git config](#attribution-from-git-config), the [tmux session name](#session-names-in-tmux) and `--model`, each unless you passed the same option yourself.
+4. Otherwise adds `--add-dir` for each `add_dirs` entry, `--settings` with the [attribution from git config](#attribution-from-git-config) and your own `--settings` merged into it, the [tmux session name](#session-names-in-tmux) and `--model`. It adds the name and the model only when you did not pass the same option yourself.
 5. Replaces itself with `claude`.
 
 A config that is missing, cannot be parsed, or fails validation stops the launch. So does a profile that the config no longer defines, and a secrets file that is invalid, unreadable or not ignored by git. `start` then prints the config path and the error and exits with a non-zero status, without starting Claude. Any other error in `start` also stops the launch, with one line that names the profile, the config path and the error. Fix the config and launch again; a reinstall is only needed for the settings that `install` writes into the profile directory.

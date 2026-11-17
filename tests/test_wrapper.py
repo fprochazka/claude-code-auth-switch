@@ -134,14 +134,25 @@ def test_subcommands_get_neither_model_nor_add_dir(installed, sandbox, subcomman
     assert argv == [subcommand, "arg"]
 
 
-@pytest.mark.parametrize("user_flag", [["--settings", "/tmp/own.json"], ["--settings=/tmp/own.json"]])
-def test_user_settings_flag_replaces_the_wrapper_settings(installed, sandbox, user_flag):
+@pytest.mark.parametrize("user_flag", [["--settings", "{own}"], ["--settings={own}"]])
+def test_user_settings_flag_is_merged_over_the_git_config_attribution(installed, sandbox, user_flag):
+    bin_dir, env = installed
+    repo = sandbox.git_init("devel/projects/company/service")
+    own = sandbox.write("own.json", '{"attribution": {"sessionUrl": true}, "model": "opus"}')
+
+    argv = json.loads(run_wrapper(bin_dir, env, "plain", repo, *(arg.format(own=own) for arg in user_flag)).stdout)
+
+    assert argv == ["--settings", json.dumps({"attribution": {**EXPECTED["attribution"], "sessionUrl": True}, "model": "opus"}, ensure_ascii=False)]
+
+
+def test_unreadable_user_settings_stops_the_launch(installed, sandbox):
     bin_dir, env = installed
     repo = sandbox.git_init("devel/projects/company/service")
 
-    argv = json.loads(run_wrapper(bin_dir, env, "plain", repo, *user_flag).stdout)
+    result = run_wrapper(bin_dir, env, "plain", repo, "--settings", "missing.json")
 
-    assert argv == user_flag
+    assert (result.returncode, result.stdout) == (2, "")
+    assert "--settings: cannot read" in result.stderr and "not starting Claude for profile 'plain'" in result.stderr
 
 
 def test_missing_tool_stops_the_launch(installed, sandbox):

@@ -53,6 +53,10 @@ class ConfigError(Exception):
     """The config does not describe a launchable profile."""
 
 
+class LaunchError(Exception):
+    """The command line asks for something start cannot do."""
+
+
 @dataclass(frozen=True)
 class Profile:
     name: str
@@ -73,6 +77,9 @@ class LaunchContext:
     tmux_session: Callable[[str], str | None]
     # Settings from the [claude-code "attribution"] git config for a directory, or None.
     git_attribution: Callable[[str], dict | None]
+    # The settings object of a user's --settings value, inline JSON or a file path relative to the cwd.
+    # Raises LaunchError when it cannot be read.
+    read_settings: Callable[[str, str], dict] = lambda value, cwd: read_settings_value(value, cwd)
 
 
 @dataclass(frozen=True)
@@ -89,16 +96,66 @@ def has_flag(args: Sequence[str], *flags: str, with_value: Sequence[str] = ()) -
     return any(arg in flags or any(arg.startswith(f"{flag}=") for flag in with_value) for arg in args)
 
 
+def pop_option(args: Sequence[str], flag: str) -> tuple[list[str], list[str]]:
+    """Remove every `flag value` and `flag=value` before a `--` from args. Returns (values, remaining args).
+
+    A flag without a value is left in place, for Claude Code to report.
+    """
+    values: list[str] = []
+    rest: list[str] = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--":
+            rest += args[index:]
+            break
+        if arg == flag and index + 1 < len(args):
+            values.append(args[index + 1])
+            index += 2
+            continue
+        if arg.startswith(f"{flag}="):
+            values.append(arg.removeprefix(f"{flag}="))
+        else:
+            rest.append(arg)
+        index += 1
+    return values, rest
+
+
 def merge_settings(*layers: dict | None) -> dict:
-    """Deep-merge settings objects; a later layer wins per key, nested objects merge."""
+    """Deep-merge settings objects; a later layer wins per key, nested objects merge.
+
+    Lists are concatenated without duplicates, as Claude Code merges its own settings sources, so a
+    permissions.allow list in a later layer adds rules instead of replacing the earlier ones.
+    """
     merged: dict = {}
     for layer in layers:
         for key, value in (layer or {}).items():
             if isinstance(value, dict) and isinstance(merged.get(key), dict):
                 merged[key] = merge_settings(merged[key], value)
+            elif isinstance(value, list) and isinstance(merged.get(key), list):
+                merged[key] = merged[key] + [item for item in value if item not in merged[key]]
             else:
                 merged[key] = value
     return merged
+
+
+def read_settings_value(value: str, cwd: str) -> dict:
+    """Read a --settings value the way Claude Code takes it: a JSON object, or the path of a JSON file."""
+    if value.lstrip().startswith("{"):
+        source, text = "inline JSON", value
+    else:
+        source = os.path.join(cwd, os.path.expanduser(value))
+        try:
+            text = Path(source).read_text()
+        except OSError as error:
+            raise LaunchError(f"--settings: cannot read {source}: {error.strerror or error}") from error
+    try:
+        settings = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise LaunchError(f"--settings: {source} is not valid JSON: {error}") from error
+    if not isinstance(settings, dict):
+        raise LaunchError(f"--settings: {source} must hold a JSON object")
+    return settings
 
 
 def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchContext) -> Launch:
@@ -114,13 +171,18 @@ def build_launch(profile: Profile, user_args: Sequence[str], context: LaunchCont
     if profile.model and not has_flag(user_args, "--model", with_value=["--model"]):
         args += ["--model", profile.model]
 
-    # Claude Code keeps only the last --settings flag instead of merging them, so a --settings from the
-    # user replaces everything the launcher would pass.
+    # Claude Code keeps only the last --settings flag instead of merging them, so start passes one
+    # --settings with every layer merged, and the user's own --settings, the last one as Claude Code
+    # would take it, merged in last.
     settings_args: list[str] = []
-    if not has_flag(user_args, "--settings", with_value=["--settings"]):
-        settings = merge_settings(context.git_attribution(context.cwd))
-        if settings:
-            settings_args = ["--settings", json.dumps(settings, ensure_ascii=False)]
+    launcher_settings = merge_settings(context.git_attribution(context.cwd))
+    # Without settings of its own, start leaves the user's --settings as it is.
+    if launcher_settings:
+        user_settings, without_settings = pop_option(args, "--settings")
+        if user_settings:
+            args = without_settings
+            launcher_settings = merge_settings(launcher_settings, context.read_settings(user_settings[-1], context.cwd))
+        settings_args = ["--settings", json.dumps(launcher_settings, ensure_ascii=False)]
 
     name_args: list[str] = []
     tmux, pane = context.environ.get("TMUX", ""), context.environ.get("TMUX_PANE", "")
@@ -285,7 +347,12 @@ def launch_profile(config_path: Path, name: str, user_args: list[str]) -> int:
         tmux_session=tmux_session_of,
         git_attribution=git_attribution_of,
     )
-    launch = build_launch(profile, user_args, context)
+    try:
+        launch = build_launch(profile, user_args, context)
+    except LaunchError as error:
+        print(f"{PROG}: {error}", file=sys.stderr)
+        print(f"{PROG}: not starting Claude for profile '{name}'", file=sys.stderr)
+        return 2
     sys.stdout.flush()
     sys.stderr.flush()
     try:

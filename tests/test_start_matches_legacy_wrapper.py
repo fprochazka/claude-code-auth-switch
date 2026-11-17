@@ -55,8 +55,9 @@ profiles:
       commit: profile commit
 """
 
+# A user's --settings is left out: start merges it with the attribution, where the legacy wrapper dropped the attribution.
 ARGUMENTS = [
-    [], ["-p", "hello"], ["--model", "opus"], ["--model=opus", "-p", "x"], ["--settings", "/tmp/own.json"], ["--settings={}"],
+    [], ["-p", "hello"], ["--model", "opus"], ["--model=opus", "-p", "x"],
     ["--resume"], ["-r", "abc"], ["--name=mine"], ["-c"], ["mcp", "list"], ["--add-dir", "/x", "-p", "two words"], ["-p", "--model"],
 ]
 

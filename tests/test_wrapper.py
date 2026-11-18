@@ -154,7 +154,7 @@ def test_subcommand_passthrough_gets_no_settings(installed, sandbox):
 def test_subcommands_get_neither_model_nor_add_dir(installed, sandbox, subcommand):
     bin_dir, env = installed
 
-    argv = json.loads(run_wrapper(bin_dir, env, "modeled", sandbox.home, subcommand, "arg").stdout)
+    argv = json.loads(run_wrapper(bin_dir, env, "modeled", sandbox.mkdir("project"), subcommand, "arg").stdout)
 
     assert argv == [subcommand, "arg"]
 
@@ -189,7 +189,7 @@ def test_missing_tool_stops_the_launch(installed, sandbox):
     bin_dir, env = installed
     (sandbox.tool_bin / "cc-auth-switch").unlink()
 
-    result = run_wrapper(bin_dir, env, "plain", sandbox.home, "-p", "hello")
+    result = run_wrapper(bin_dir, env, "plain", sandbox.mkdir("project"), "-p", "hello")
 
     # The launcher's `exec` of a missing file exits 127 in the bash of Linux distributions, and 126 with
     # "cannot execute: No such file or directory" in the bash on GitHub's macOS runners.
@@ -210,7 +210,7 @@ def test_unparsable_config_stops_the_launch(installed, sandbox):
     config.write_text(config.read_text() + "  broken: [\n")
 
     assert_launch_refused(
-        run_wrapper(bin_dir, env, "plain", sandbox.home),
+        run_wrapper(bin_dir, env, "plain", sandbox.mkdir("project")),
         f"cannot read {config}",
         "not starting Claude for profile 'plain'",
     )
@@ -233,7 +233,7 @@ def test_invalid_profile_stops_the_launch(installed, sandbox, profile_yaml, erro
     config = sandbox.home / "auth-switch.yaml"
     config.write_text(config.read_text() + profile_yaml)
 
-    assert_launch_refused(run_wrapper(bin_dir, env, "modeled", sandbox.home), error, str(config))
+    assert_launch_refused(run_wrapper(bin_dir, env, "modeled", sandbox.mkdir("project")), error, str(config))
 
 
 def test_install_refuses_an_env_name_that_cannot_reach_claude(installed, sandbox):
@@ -255,7 +255,7 @@ def test_removed_profile_stops_the_launch(installed, sandbox):
     config.write_text(config.read_text().split("  modeled:")[0])
 
     assert_launch_refused(
-        run_wrapper(bin_dir, env, "modeled", sandbox.home), f"{config}: profile 'modeled' is not defined"
+        run_wrapper(bin_dir, env, "modeled", sandbox.mkdir("project")), f"{config}: profile 'modeled' is not defined"
     )
 
 
@@ -264,7 +264,9 @@ def test_missing_config_stops_the_launch(installed, sandbox):
     config = sandbox.home / "auth-switch.yaml"
     config.unlink()
 
-    assert_launch_refused(run_wrapper(bin_dir, env, "plain", sandbox.home), f"{config}: the file does not exist")
+    assert_launch_refused(
+        run_wrapper(bin_dir, env, "plain", sandbox.mkdir("project")), f"{config}: the file does not exist"
+    )
 
 
 def test_secrets_file_that_git_would_publish_stops_the_launch(installed, sandbox):
@@ -273,7 +275,7 @@ def test_secrets_file_that_git_would_publish_stops_the_launch(installed, sandbox
     secrets = sandbox.write("auth-switch.secrets.yaml", 'profiles:\n  plain:\n    env:\n      KEY: "value"\n')
 
     assert_launch_refused(
-        run_wrapper(bin_dir, env, "plain", sandbox.home),
+        run_wrapper(bin_dir, env, "plain", sandbox.mkdir("project")),
         f"Secrets file {secrets} is inside a git repository but is not ignored",
         str(sandbox.home / "auth-switch.yaml"),
     )
@@ -284,7 +286,8 @@ def test_invalid_secrets_file_stops_the_launch(installed, sandbox):
     secrets = sandbox.write("auth-switch.secrets.yaml", "profiles:\n  plain:\n    model: opus\n")
 
     assert_launch_refused(
-        run_wrapper(bin_dir, env, "plain", sandbox.home), f"{secrets}: profile 'plain' may only contain 'env'"
+        run_wrapper(bin_dir, env, "plain", sandbox.mkdir("project")),
+        f"{secrets}: profile 'plain' may only contain 'env'",
     )
 
 
@@ -294,7 +297,7 @@ def test_unreadable_secrets_file_stops_the_launch(installed, sandbox):
     secrets = sandbox.write("auth-switch.secrets.yaml", "profiles: {}\n")
     secrets.chmod(0)
 
-    assert_launch_refused(run_wrapper(bin_dir, env, "plain", sandbox.home), f"cannot read {secrets}")
+    assert_launch_refused(run_wrapper(bin_dir, env, "plain", sandbox.mkdir("project")), f"cannot read {secrets}")
 
 
 def test_config_changes_apply_without_reinstalling(installed, sandbox):
@@ -302,7 +305,7 @@ def test_config_changes_apply_without_reinstalling(installed, sandbox):
     config = sandbox.home / "auth-switch.yaml"
     config.write_text(config.read_text().replace("model: sonnet", "model: opus"))
 
-    assert json.loads(run_wrapper(bin_dir, env, "modeled", sandbox.home, "-p", "x").stdout)[-4:] == [
+    assert json.loads(run_wrapper(bin_dir, env, "modeled", sandbox.mkdir("project"), "-p", "x").stdout)[-4:] == [
         "--model",
         "opus",
         "-p",
@@ -399,7 +402,7 @@ def in_tmux(installed, sandbox):
 def test_wrapper_names_the_session_after_the_tmux_session_and_pane(in_tmux, sandbox, profile):
     bin_dir, env = in_tmux
 
-    result = run_wrapper(bin_dir, env, profile, sandbox.home, "-p", "hello")
+    result = run_wrapper(bin_dir, env, profile, sandbox.mkdir("project"), "-p", "hello")
 
     assert result.returncode == 0, result.stderr
     argv = json.loads(result.stdout)
@@ -409,7 +412,7 @@ def test_wrapper_names_the_session_after_the_tmux_session_and_pane(in_tmux, sand
 def test_wrapper_outside_tmux_passes_no_name(installed, sandbox):
     bin_dir, env = installed
 
-    assert "--name" not in json.loads(run_wrapper(bin_dir, env, "plain", sandbox.home).stdout)
+    assert "--name" not in json.loads(run_wrapper(bin_dir, env, "plain", sandbox.mkdir("project")).stdout)
 
 
 @pytest.mark.parametrize(
@@ -434,7 +437,7 @@ def test_wrapper_outside_tmux_passes_no_name(installed, sandbox):
 def test_wrapper_passes_no_name_when_the_session_already_has_or_resumes_one(in_tmux, sandbox, user_args):
     bin_dir, env = in_tmux
 
-    argv = json.loads(run_wrapper(bin_dir, env, "plain", sandbox.home, *user_args).stdout)
+    argv = json.loads(run_wrapper(bin_dir, env, "plain", sandbox.mkdir("project"), *user_args).stdout)
 
     assert argv == user_args
 
@@ -442,7 +445,7 @@ def test_wrapper_passes_no_name_when_the_session_already_has_or_resumes_one(in_t
 def test_wrapper_launches_without_name_when_tmux_fails(in_tmux, sandbox):
     bin_dir, env = in_tmux
 
-    result = run_wrapper(bin_dir, {**env, "FAKE_TMUX_FAIL": "1"}, "plain", sandbox.home, "-p", "hello")
+    result = run_wrapper(bin_dir, {**env, "FAKE_TMUX_FAIL": "1"}, "plain", sandbox.mkdir("project"), "-p", "hello")
 
     assert (result.returncode, json.loads(result.stdout)) == (0, ["-p", "hello"])
 
@@ -450,7 +453,10 @@ def test_wrapper_launches_without_name_when_tmux_fails(in_tmux, sandbox):
 def test_subcommands_get_no_name(in_tmux, sandbox):
     bin_dir, env = in_tmux
 
-    assert json.loads(run_wrapper(bin_dir, env, "modeled", sandbox.home, "mcp", "list").stdout) == ["mcp", "list"]
+    assert json.loads(run_wrapper(bin_dir, env, "modeled", sandbox.mkdir("project"), "mcp", "list").stdout) == [
+        "mcp",
+        "list",
+    ]
 
 
 @pytest.mark.parametrize("name", ["123", "a/b", "''"])
@@ -477,7 +483,7 @@ def test_start_accepts_config_with_equals_sign(installed, sandbox):
     bin_dir, env = installed
 
     result = run_start(
-        sandbox, env, sandbox.home, f"--config={sandbox.home / 'auth-switch.yaml'}", "modeled", "-p", "x"
+        sandbox, env, sandbox.mkdir("project"), f"--config={sandbox.home / 'auth-switch.yaml'}", "modeled", "-p", "x"
     )
 
     assert result.returncode == 0, result.stderr
@@ -493,12 +499,13 @@ def test_start_reads_a_relative_config_and_its_secrets_from_the_current_director
     # Anchored to config/, so git must be asked about the file by its real path.
     (config_dir / ".gitignore").write_text("/auth-switch.secrets.yaml\n")
 
+    work = sandbox.mkdir("work")
     result = run_start(
         sandbox,
-        {**env, "PWD": str(sandbox.home)},
-        sandbox.home,
+        {**env, "PWD": str(work)},
+        work,
         "--config",
-        "config/auth-switch.yaml",
+        "../config/auth-switch.yaml",
         "plain",
         "-p",
         "x",
@@ -506,3 +513,20 @@ def test_start_reads_a_relative_config_and_its_secrets_from_the_current_director
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == ["-p", "x"]
+
+
+def test_wrapper_refuses_to_start_in_the_home_directory_unless_allowed(installed, sandbox):
+    bin_dir, env = installed
+
+    assert_launch_refused(
+        run_wrapper(bin_dir, env, "plain", sandbox.home, "-p", "x"),
+        f"refusing to start in the home directory {sandbox.home}",
+        "not starting Claude for profile 'plain'",
+    )
+    assert json.loads(run_wrapper(bin_dir, env, "plain", sandbox.home, "--version").stdout) == ["--version"]
+    allowed = run_wrapper(bin_dir, {**env, "CC_AUTH_SWITCH_ALLOW_HOME": "1"}, "plain", sandbox.home, "-p", "x")
+    assert json.loads(allowed.stdout) == ["-p", "x"]
+
+    config = sandbox.home / "auth-switch.yaml"
+    config.write_text("refuse_home_cwd: false\n" + config.read_text())
+    assert json.loads(run_wrapper(bin_dir, env, "plain", sandbox.home, "-p", "x").stdout) == ["-p", "x"]

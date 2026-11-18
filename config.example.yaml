@@ -5,7 +5,7 @@
 #   - Config dir: <profiles_dir>/<name>/
 #   - Launcher: <bin_dir>/claude-<name>, which runs `cc-auth-switch start <name>`
 #
-# Every launch reads this file again, so env, model, add_dirs, pinned_models, default_role and roles
+# Every launch reads this file again, so env, model, add_dirs, pinned_models, default_role, refuse_home_cwd and roles
 # apply at the next launch. Re-run `cc-auth-switch install` after adding or removing a profile or changing the keys
 # that it writes into the profile directory: attribution, plansDirectory, plugins and share_sessions.
 #
@@ -20,6 +20,11 @@ bin_dir: ~/.local/bin
 
 # Create profile directories here (default: ~/.claude-profiles)
 # profiles_dir: ~/.claude-profiles
+
+# Refuse to start a session in the home directory (default: true). Claude Code would read ~/.claude/settings.json
+# as the project settings of ~ and install every enabled plugin at project scope for it. A profile can override it.
+# Start in ~ once with CC_AUTH_SWITCH_ALLOW_HOME=1 claude-<name>.
+refuse_home_cwd: true
 
 profiles:
   personal:

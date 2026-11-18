@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from claude_code_auth_switch import launcher
+from claude_code_auth_switch.config import ConfigError
 from claude_code_auth_switch.installer import MARKER, cleanup_stale_scripts, generate_launcher_script
 from claude_code_auth_switch.launcher import (
     LaunchContext,
@@ -296,7 +297,11 @@ def test_start_does_not_load_the_installer(sandbox):
         "main(['start', '--config', sys.argv[1], 'work', '-p', 'hi'])\n"
     )
     result = subprocess.run(
-        [sys.executable, "-c", script, str(config)], env=sandbox.env, capture_output=True, text=True, cwd=sandbox.home
+        [sys.executable, "-c", script, str(config)],
+        env=sandbox.env,
+        capture_output=True,
+        text=True,
+        cwd=sandbox.mkdir("project"),
     )
 
     assert result.stdout.strip() == "[] ['-p', 'hi']", result.stderr
@@ -389,3 +394,99 @@ def test_launcher_keeps_a_multiline_description_in_its_comment():
         "# Profile: work — first line touch /tmp/pwned last",
         'exec /bin/cc-auth-switch start --config /c.yaml work "$@"',
     ]
+
+
+def home_context(tmp_path, cwd, environ=None):
+    ctx, _ = context({"HOME": str(tmp_path / "home"), **(environ or {})})
+    return dataclasses.replace(ctx, cwd=str(cwd))
+
+
+@pytest.mark.parametrize("cwd", ["home", "home/.", "home/sub/..", "link-to-home"])
+def test_a_session_in_the_home_directory_is_refused(tmp_path, cwd):
+    (tmp_path / "home/sub").mkdir(parents=True)
+    (tmp_path / "link-to-home").symlink_to(tmp_path / "home")
+
+    with pytest.raises(
+        LaunchError,
+        match="refusing to start in the home directory .*CC_AUTH_SWITCH_ALLOW_HOME=1.*refuse_home_cwd: false",
+    ):
+        build_launch(PROFILE, ["-p", "hi"], home_context(tmp_path, tmp_path / cwd))
+
+
+@pytest.mark.parametrize(
+    "args",
+    [["-p", "hi"], ["--resume", "00000000-0000-0000-0000-000000000000"], ["--continue"], ["--name", "--version"]],
+)
+def test_print_mode_and_resume_in_the_home_directory_are_refused_too(tmp_path, args):
+    (tmp_path / "home").mkdir()
+
+    with pytest.raises(LaunchError, match="refusing to start in the home directory"):
+        build_launch(PROFILE, args, home_context(tmp_path, tmp_path / "home"))
+
+
+@pytest.mark.parametrize("args", [["--version"], ["-v"], ["--help"], ["-h"], ["mcp", "list"], ["plugin", "list"]])
+def test_subcommands_and_version_or_help_run_in_the_home_directory(tmp_path, args):
+    (tmp_path / "home").mkdir()
+
+    assert build_launch(PROFILE, args, home_context(tmp_path, tmp_path / "home")).argv == args
+
+
+def test_a_subdirectory_of_home_starts(tmp_path):
+    (tmp_path / "home/project").mkdir(parents=True)
+
+    assert build_launch(PROFILE, ["-p", "hi"], home_context(tmp_path, tmp_path / "home/project")).argv[-2:] == [
+        "-p",
+        "hi",
+    ]
+
+
+def test_the_allow_home_variable_starts_once_and_is_not_passed_on(tmp_path):
+    (tmp_path / "home").mkdir()
+
+    launch = build_launch(
+        PROFILE, ["-p", "hi"], home_context(tmp_path, tmp_path / "home", {"CC_AUTH_SWITCH_ALLOW_HOME": "1"})
+    )
+
+    assert launch.argv[-2:] == ["-p", "hi"]
+    assert "CC_AUTH_SWITCH_ALLOW_HOME" not in launch.env
+
+
+def test_the_allow_home_variable_needs_the_value_1(tmp_path):
+    (tmp_path / "home").mkdir()
+
+    with pytest.raises(LaunchError, match="refusing to start in the home directory"):
+        build_launch(PROFILE, [], home_context(tmp_path, tmp_path / "home", {"CC_AUTH_SWITCH_ALLOW_HOME": "yes"}))
+
+
+def test_a_profile_without_refuse_home_cwd_starts_in_the_home_directory(tmp_path):
+    (tmp_path / "home").mkdir()
+    profile = dataclasses.replace(PROFILE, refuse_home_cwd=False)
+
+    assert build_launch(profile, ["-p", "hi"], home_context(tmp_path, tmp_path / "home")).argv[-2:] == ["-p", "hi"]
+
+
+@pytest.mark.parametrize(
+    ("top_level", "profile_value", "expected"),
+    [(None, None, True), (False, None, False), (False, True, True), (True, False, False), (None, False, False)],
+)
+def test_refuse_home_cwd_defaults_to_true_and_the_profile_wins_over_the_top_level(top_level, profile_value, expected):
+    config: dict[str, Any] = {"profiles": {"work": {} if profile_value is None else {"refuse_home_cwd": profile_value}}}
+    if top_level is not None:
+        config["refuse_home_cwd"] = top_level
+
+    assert launcher.resolve_profile(config, {}, Path("/p"), "work").refuse_home_cwd is expected
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        ({"refuse_home_cwd": "no", "profiles": {"work": {}}}, "'refuse_home_cwd' must be true or false, not 'no'"),
+        (
+            {"profiles": {"work": {"refuse_home_cwd": 0}}},
+            "profile 'work': 'refuse_home_cwd' must be true or false, not 0",
+        ),
+    ],
+)
+def test_refuse_home_cwd_must_be_a_boolean(config, message):
+    with pytest.raises(ConfigError, match=message):
+        launcher.resolve_profile(config, {}, Path("/p"), "work")

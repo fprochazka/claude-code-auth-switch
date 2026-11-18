@@ -45,7 +45,7 @@ The `cc-auth-switch install` command reads `~/.claude/auth-switch.yaml`, creates
     └── ...
 ```
 
-**Why read the config on every launch?** A change to `env`, `model`, `add_dirs`, `pinned_models`, `default_role`, `roles:` or the secrets file applies at the next launch without a reinstall, and the launch logic lives in Python where it can be tested. It costs two things. Each launch takes about 10 ms longer than the bash wrappers of earlier versions, measured on Linux. A broken config or a broken tool install now stops every `claude-*` command, where static wrappers kept working. `cc-auth-switch start` never falls back to a plain `claude`, because that would start Claude under the wrong account: it prints the config path and the error and exits with a non-zero status. See [`cc-auth-switch start`](#cc-auth-switch-start-profile).
+**Why read the config on every launch?** A change to `env`, `model`, `add_dirs`, `pinned_models`, `default_role`, `refuse_home_cwd`, `roles:` or the secrets file applies at the next launch without a reinstall, and the launch logic lives in Python where it can be tested. It costs two things. Each launch takes about 10 ms longer than the bash wrappers of earlier versions, measured on Linux. A broken config or a broken tool install now stops every `claude-*` command, where static wrappers kept working. `cc-auth-switch start` never falls back to a plain `claude`, because that would start Claude under the wrong account: it prints the config path and the error and exits with a non-zero status. See [`cc-auth-switch start`](#cc-auth-switch-start-profile).
 
 **Why copy some files and symlink others?** Claude Code uses atomic writes (write-to-temp + `fs.rename`) for config files like `settings.json`. This replaces symlinks with regular files, breaking the link. Directory symlinks are unaffected — files created inside a symlinked directory are real files in the target. See [design decisions](docs/Binary-Analysis-and-Design-Decisions.md) for details.
 
@@ -149,6 +149,22 @@ This works because each profile has its own `CLAUDE_CONFIG_DIR` (no credential c
 Inside tmux, the launcher names a new session after the tmux session and pane: `--name "<tmux session>-p<pane number>"`, for example `api-service-p12` for pane `%12`. Other sessions can then address it by that name with `SendMessage`, which is useful together with [shared sessions](#sharing-sessions-between-profiles).
 
 The launcher adds no name when you pass `-n`/`--name` yourself, and none when you resume or continue a session (`-r`/`--resume`, `-c`/`--continue`, `--session-id`, `--fork-session`, `--from-pr`). A name given at launch replaces the saved title of a resumed session, including one set with `/rename`. When `tmux display-message` fails or does not answer within 2 seconds, the session starts without a name. Subcommands such as `claude-work-team mcp list` never get a name, because they reject the option.
+
+### Starting in the home directory
+
+`start` refuses to start a session when the start directory is your home directory. Claude Code reads `.claude/settings.json` of the start directory as project settings, and in `~` that file is `~/.claude/settings.json`, the source whose `enabledPlugins` the installer copies into every profile. A session started in `~` therefore installs every enabled plugin at project scope for your home directory, and those installs stay after the session ends. `start` compares resolved paths, so `~/.` and a symlink to `~` count as the home directory too, and a directory below `~` does not.
+
+`start` prints why and exits with status 2. The refusal also covers `-p`, `--resume` and `--continue`, because Claude Code loads the project settings for them as for a new session. Subcommands such as `mcp list`, and `-v`/`--version` or `-h`/`--help` before a `--`, still run in `~`, because they start no session.
+
+To start in `~` once, set `CC_AUTH_SWITCH_ALLOW_HOME=1` for the launch: `CC_AUTH_SWITCH_ALLOW_HOME=1 claude-personal`. `start` does not pass the variable on to Claude Code, so a launcher run from inside that session is refused again. To turn the check off, set `refuse_home_cwd: false` at the top level of the config for every profile, or in one profile. A profile's value wins over the top-level one:
+
+```yaml
+refuse_home_cwd: true
+
+profiles:
+  sandbox:
+    refuse_home_cwd: false
+```
 
 ### Additional directories
 
@@ -388,6 +404,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 |-------|---------|-------------|
 | `source_dir` | `~/.claude` | Directory to copy/symlink shared config from |
 | `bin_dir` | `~/.local/bin` | Where to install the `claude-<name>` launchers |
+| `refuse_home_cwd` | `true` | Boolean. Refuse to start a session in the home directory. See [Starting in the home directory](#starting-in-the-home-directory). |
 | `profiles_dir` | `~/.claude-profiles` | Where to create the per-profile config directories. `~` is expanded. | Only the profiles listed in the config are managed: the installer never reads for writing, changes or deletes anything in another directory under `profiles_dir`.
 | `profiles.<name>.description` | `""` | Human-readable profile description |
 | `profiles.<name>.model` | | Default model to use (e.g., `sonnet`, `opus`). Overridden by `--model` on the command line. |
@@ -401,6 +418,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | `profiles.<name>.plansDirectory` | | Path written to the profile's `settings.json` as `plansDirectory`. `~` is expanded at install time. |
 | `profiles.<name>.plugins` | `{}` | Map of `"<plugin>@<marketplace>"` to `true` or `false`, applied on top of the `enabledPlugins` copied from `source_dir`. See [Plugins](#plugins). |
 | `profiles.<name>.share_sessions` | `false` | Boolean. Point the profile's `sessions/` at `~/.claude/sessions`, so that its sessions and those of other sharing profiles and plain `claude` can list and message each other. See [Sharing sessions between profiles](#sharing-sessions-between-profiles). |
+| `profiles.<name>.refuse_home_cwd` | top-level `refuse_home_cwd` | Boolean. Wins over the top-level `refuse_home_cwd` for this profile. |
 | `profiles.<name>.default_role` | | Name of a role under `roles:` that applies when the command line has no `--agent-role`, or `none` for no role. See [Roles](#roles). |
 | `roles.<name>.description` | | Human-readable role description |
 | `roles.<name>.prompt.file` | | Absolute path of the role's prompt file. `~` is expanded. A file that `start` cannot read stops the launch. |
@@ -443,14 +461,15 @@ cc-auth-switch start [--config PATH] <profile> [claude arguments...]
 
 The `claude-<name>` launchers run this command with the `--config` path that `install` used. Everything after the profile goes to `claude`, except `--agent-role` and a `--settings` that `start` merges into its own. In this order, `start`:
 
-1. Reads the config and the secrets file, and resolves the profile's `env`, `pinned_models`, `model`, `add_dirs` and `default_role`, and the `roles:` section.
+1. Reads the config and the secrets file, and resolves the profile's `env`, `pinned_models`, `model`, `add_dirs`, `default_role` and `refuse_home_cwd`, and the `roles:` section.
 2. Removes `--agent-role` from the start of the arguments.
-3. Drops every inherited `CLAUDE_*` and `ANTHROPIC_*` variable, the `FP_CC_AUTH_SWITCH_ROLE*` variables, and every variable that `FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS` names while it still holds the role's value, so a launch from inside another Claude Code session does not inherit its account or its role. Then it sets `CLAUDE_CONFIG_DIR`, `FP_CC_AUTH_SWITCH_PROFILE` and the profile's `env`.
+3. Drops every inherited `CLAUDE_*` and `ANTHROPIC_*` variable, the `FP_CC_AUTH_SWITCH_ROLE*` variables, and every variable that `FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS` names while it still holds the role's value, so a launch from inside another Claude Code session does not inherit its account or its role. Then it sets `CLAUDE_CONFIG_DIR`, `FP_CC_AUTH_SWITCH_PROFILE` and the profile's `env`. It also drops `CC_AUTH_SWITCH_ALLOW_HOME`.
 4. Passes the arguments through when the first one is a Claude Code subcommand such as `mcp`, `auth` or `plugin`, because subcommands reject the session options. It does the same when the option `-v`, `--version`, `-h` or `--help` comes before any `--`, because `claude` then prints and exits without a session. The value of another option, as in `--name -v`, does not count.
-5. Otherwise puts its own arguments before yours, and picks the [role](#roles), also the role a [resumed session](#resuming-a-session-with-a-role) ran as, sets its `env` and the role variables, and adds `--add-dir=<dir>` for each `add_dirs` entry of the profile and the role, `--settings` with the [attribution from git config](#attribution-from-git-config), the role's `settings` and your own `--settings` merged into it, the [tmux session name](#session-names-in-tmux), the role's flags, `--system-prompt-snapshot off` when a resume switches the role, and `--model`. It adds the name, the model and the role's single-value flags only when you did not pass the same option yourself.
-6. Prints its notes to stderr, and replaces itself with `claude`.
+5. Otherwise stops when the start directory is the home directory, unless `refuse_home_cwd` is off for the profile or `CC_AUTH_SWITCH_ALLOW_HOME=1` is set. See [Starting in the home directory](#starting-in-the-home-directory).
+6. Otherwise puts its own arguments before yours, and picks the [role](#roles), also the role a [resumed session](#resuming-a-session-with-a-role) ran as, sets its `env` and the role variables, and adds `--add-dir=<dir>` for each `add_dirs` entry of the profile and the role, `--settings` with the [attribution from git config](#attribution-from-git-config), the role's `settings` and your own `--settings` merged into it, the [tmux session name](#session-names-in-tmux), the role's flags, `--system-prompt-snapshot off` when a resume switches the role, and `--model`. It adds the name, the model and the role's single-value flags only when you did not pass the same option yourself.
+7. Prints its notes to stderr, and replaces itself with `claude`.
 
-A config that is missing, cannot be parsed, or fails validation stops the launch. So does a profile that the config no longer defines, a secrets file that is invalid, unreadable or not ignored by git, an unknown `--agent-role`, a role whose prompt file `start` cannot read, and a `--settings` file that `start` cannot read. `start` then prints the config path and the error and exits with a non-zero status, without starting Claude. Any other error in `start` also stops the launch, with one line that names the profile, the config path and the error. Fix the config and launch again; a reinstall is only needed for the settings that `install` writes into the profile directory.
+A config that is missing, cannot be parsed, or fails validation stops the launch. So does a profile that the config no longer defines, a secrets file that is invalid, unreadable or not ignored by git, a start in the home directory, an unknown `--agent-role`, a role whose prompt file `start` cannot read, and a `--settings` file that `start` cannot read. `start` then prints the config path and the error and exits with a non-zero status, without starting Claude. Any other error in `start` also stops the launch, with one line that names the profile, the config path and the error. Fix the config and launch again; a reinstall is only needed for the settings that `install` writes into the profile directory.
 
 `start` reads your arguments with the option table of `claude --help` from Claude Code 2.1.325, the way Claude Code's option parser does, so it tells an option from the value of another one. An option with a value takes the next argument even when that looks like an option: in `--name --model`, `--model` is the session name, and `start` still adds the profile's model. An option with an optional value, such as `--resume` or `--debug`, takes the next argument only when it does not start with `-`. A list option, such as `--add-dir`, takes the arguments up to the next one that starts with `-`. An option that the table does not know, such as a hidden one, is read as taking no value. A newer Claude Code may add options that the table does not know yet.
 
@@ -483,7 +502,7 @@ A config that is missing, cannot be parsed, or fails validation stops the launch
 ```bash
 # Added or removed a profile, or changed attribution, plansDirectory, plugins or share_sessions → re-run install
 # (also syncs mcpServers from ~/.claude.json into each profile).
-# env, model, add_dirs, pinned_models, default_role, roles and the secrets file apply at the next launch without it.
+# env, model, add_dirs, pinned_models, default_role, refuse_home_cwd, roles and the secrets file apply at the next launch without it.
 cc-auth-switch install
 
 # Changed ~/.claude/settings.json and want profiles to pick it up

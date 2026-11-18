@@ -85,6 +85,12 @@ ROLE_ENV_VARS = (ROLE_ENV, ROLE_PROMPT_ENV, ROLE_PROMPT_MODE_ENV, ROLE_ENV_KEYS_
 # Set to 1 to get the traceback of an unexpected error in `start` instead of a one-line message.
 DEBUG_ENV = "CC_AUTH_SWITCH_DEBUG"
 
+# Set to 1 to start a session in the home directory once, although refuse_home_cwd is on. Outside CLAUDE_*,
+# so start does not drop it with the inherited variables; start drops it itself, so it does not carry over
+# to a launch from inside the session.
+ALLOW_HOME_ENV = "CC_AUTH_SWITCH_ALLOW_HOME"
+REFUSE_HOME_CWD_KEY = "refuse_home_cwd"
+
 AGENT_ROLE_FLAG = "--agent-role"
 
 # With one of these, claude prints and exits without a session, so start passes the arguments through
@@ -121,6 +127,8 @@ class Profile:
     model: str | None = None
     # Role applied when the command line has no --agent-role, or NO_ROLE.
     default_role: str | None = None
+    # Refuse a session whose start directory is the home directory, see refuse_home_cwd.
+    refuse_home_cwd: bool = True
 
 
 @dataclass(frozen=True)
@@ -279,6 +287,12 @@ def role_args(role: Role, args: Sequence[str]) -> list[str]:
     return result
 
 
+def is_home_directory(context: LaunchContext) -> bool:
+    """Tell whether the start directory is the home directory, by resolved path, so ~/. and a symlink to ~ count."""
+    home = context.environ.get("HOME") or os.path.expanduser("~")
+    return os.path.realpath(context.cwd) == os.path.realpath(home)
+
+
 def resume_target(args: Sequence[str]) -> tuple[str, str | None] | None:
     """Tell what the arguments resume: ("id", <uuid>), ("continue", None), ("picker", None), ("session-id", <uuid>),
     or None for a new session.
@@ -327,6 +341,7 @@ def build_launch(
         if not key.startswith(CLEARED_ENV_PREFIXES)
         and key not in ROLE_ENV_VARS
         and inherited_role_env.get(key) != env_value_hash(value)
+        and key != ALLOW_HOME_ENV
     }
     env["CLAUDE_CONFIG_DIR"] = str(profile.config_dir)
     env["FP_CC_AUTH_SWITCH_PROFILE"] = profile.name
@@ -334,6 +349,13 @@ def build_launch(
 
     if is_passthrough(args):
         return Launch(args, env)
+
+    if profile.refuse_home_cwd and context.environ.get(ALLOW_HOME_ENV) != "1" and is_home_directory(context):
+        raise LaunchError(
+            f"refusing to start in the home directory {context.cwd}: Claude Code would read ~/.claude/settings.json as the project settings of ~"
+            f" and install every enabled plugin at project scope for it. Start in a project directory, run once with {ALLOW_HOME_ENV}=1,"
+            f" or set {REFUSE_HOME_CWD_KEY}: false in the config"
+        )
 
     notes: list[str] = []
     requested_name = None if requested_role == NO_ROLE else requested_role
@@ -561,6 +583,14 @@ def resolve_profile(
                 f"profile '{name}': default_role '{default_role}' is not defined under roles: (or '{NO_ROLE}' for no role)"
             )
 
+    refuse_home_cwd = config.get(REFUSE_HOME_CWD_KEY, True)
+    if not isinstance(refuse_home_cwd, bool):
+        raise ConfigError(f"'{REFUSE_HOME_CWD_KEY}' must be true or false, not {refuse_home_cwd!r}")
+    # The profile's value wins over the top-level one.
+    refuse_home_cwd = profile_config.get(REFUSE_HOME_CWD_KEY, refuse_home_cwd)
+    if not isinstance(refuse_home_cwd, bool):
+        raise ConfigError(f"profile '{name}': '{REFUSE_HOME_CWD_KEY}' must be true or false, not {refuse_home_cwd!r}")
+
     model = profile_config.get("model") or None
     if model is not None and "\0" in str(model):
         raise ConfigError(f"profile '{name}': 'model' contains a NUL character")
@@ -573,6 +603,7 @@ def resolve_profile(
         add_dirs=tuple(expand_path(directory) for directory in add_dirs),
         model=str(model) if model is not None else None,
         default_role=default_role,
+        refuse_home_cwd=refuse_home_cwd,
     )
 
 

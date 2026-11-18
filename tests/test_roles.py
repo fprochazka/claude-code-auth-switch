@@ -527,7 +527,11 @@ def role_launch(sandbox):
 
     def run(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [str(sandbox.home / "bin/claude-work"), *args], cwd=sandbox.home, env=env, capture_output=True, text=True
+            [str(sandbox.home / "bin/claude-work"), *args],
+            cwd=sandbox.mkdir("project"),
+            env=env,
+            capture_output=True,
+            text=True,
         )
 
     return run, config, prompt

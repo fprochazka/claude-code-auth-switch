@@ -11,11 +11,14 @@ It runs no processes and reads no files itself, so tests can call it directly.
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import hashlib
 import json
 import os
 import re
+import shlex
+import shutil
 import stat
 import subprocess
 import sys
@@ -91,6 +94,20 @@ DEBUG_ENV = "CC_AUTH_SWITCH_DEBUG"
 ALLOW_HOME_ENV = "CC_AUTH_SWITCH_ALLOW_HOME"
 REFUSE_HOME_CWD_KEY = "refuse_home_cwd"
 
+# Put `cc-auth-switch statusline` in front of the user's status line, to record the rate limits Claude Code passes it.
+CAPTURE_RATE_LIMITS_KEY = "capture_rate_limits"
+STATUS_LINE_KEY = "statusLine"
+STATUSLINE_SUBCOMMAND = "statusline"
+# The statusLine keys that change how Claude Code shows the line, copied from the user's statusLine to the injected one.
+STATUS_LINE_DISPLAY_KEYS = ("padding", "refreshInterval", "hideVimModeIndicator")
+# The settings files whose statusLine the injected one replaces, lowest precedence first, by their --setting-sources name.
+STATUS_LINE_SOURCES = ("user", "project", "local")
+# Managed settings, which win over --settings. A statusLine there, or allowManagedHooksOnly, makes Claude Code ignore ours.
+MANAGED_SETTINGS_DIRS = {
+    "linux": Path("/etc/claude-code"),
+    "darwin": Path("/Library/Application Support/ClaudeCode"),
+}
+
 AGENT_ROLE_FLAG = "--agent-role"
 
 # With one of these, claude prints and exits without a session, so start passes the arguments through
@@ -129,6 +146,20 @@ class Profile:
     default_role: str | None = None
     # Refuse a session whose start directory is the home directory, see refuse_home_cwd.
     refuse_home_cwd: bool = True
+    # Inject the statusline tap, see capture_rate_limits. Off here, so that a Profile built by hand launches as before;
+    # resolve_profile() turns it on unless the config turns it off.
+    capture_rate_limits: bool = False
+
+
+@dataclass(frozen=True)
+class StatusLineSources:
+    """The statusLine objects of the settings files that Claude Code would read for a session, and whether it would
+    ignore the one start passes."""
+
+    # (source, statusLine) of each file that has one, in STATUS_LINE_SOURCES order.
+    layers: tuple[tuple[str, dict[str, Any]], ...] = ()
+    # Managed settings set a statusLine or allowManagedHooksOnly, so a statusLine in --settings never runs.
+    managed: bool = False
 
 
 @dataclass(frozen=True)
@@ -155,6 +186,12 @@ class LaunchContext:
     newest_start: Callable[[Path, str], dict[str, Any] | None] = lambda config_dir, cwd: newest_start_in(
         config_dir, cwd
     )
+    # The statusLine settings of the user, project and local settings files for a session (config dir, cwd).
+    status_line_sources: Callable[[Path, str], StatusLineSources] = lambda config_dir, cwd: read_status_line_sources(
+        config_dir, cwd
+    )
+    # The shell words that run this tool, for the statusLine command.
+    tool_command: Callable[[], str] = lambda: own_command()
 
 
 @dataclass(frozen=True)
@@ -200,6 +237,146 @@ def read_settings_value(value: str, cwd: str) -> dict[str, Any]:
     if not isinstance(settings, dict):
         raise LaunchError(f"--settings: {source} must hold a JSON object")
     return settings
+
+
+def own_command() -> str:
+    """The command that runs this cc-auth-switch, as shell words: the absolute path it was started by."""
+    program = sys.argv[0] if sys.argv else ""
+    if program and os.sep not in program:
+        program = shutil.which(program) or program
+    if not program or program.endswith(".py") or not os.path.isfile(program):
+        # Started as `python -m claude_code_auth_switch` or from `python -c`, as some tests do.
+        return shlex.join([sys.executable, "-m", "claude_code_auth_switch"])
+    return shlex.quote(os.path.abspath(program))
+
+
+def is_tap_command(command: str) -> bool:
+    """Tell whether a statusLine command runs `cc-auth-switch statusline`, which must never call itself."""
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return False
+    return any(
+        word == STATUSLINE_SUBCOMMAND
+        and (os.path.basename(before) == "cc-auth-switch" or before == "claude_code_auth_switch")
+        for before, word in zip(words, words[1:], strict=False)
+    )
+
+
+def setting_sources(args: Sequence[str]) -> set[str]:
+    """The settings files that a --setting-sources option lets Claude Code read, all of them without one."""
+    chosen = [option.values for option in scan(args) if option.name == "--setting-sources" and option.values]
+    if not chosen:
+        return set(STATUS_LINE_SOURCES)
+    return {source.strip() for value in chosen[-1] for source in value.split(",")}
+
+
+def status_line_tap(
+    sources: StatusLineSources, user_settings: dict[str, Any] | None, args: Sequence[str], tool_command: str
+) -> dict[str, Any] | None:
+    """The statusLine that runs `cc-auth-switch statusline` and then the user's own status line, or None without one.
+
+    The user's status line is the one Claude Code would run without the launcher: the statusLine of the settings files,
+    each over the one before, then the user's own --settings over them. The keys that change how the line is shown are
+    copied, so the injected object looks the same whether Claude Code merges it with the files' or replaces theirs.
+
+    Without a status line of the user's own, there is nothing to put the tap in front of: any configured statusLine
+    hides Claude Code's footer hint row, and asks for workspace trust in an untrusted folder, so the session keeps
+    having none, and the profile records no rate limits from it.
+    """
+    allowed = setting_sources(args)
+    effective: dict[str, Any] = {}
+    for source, status_line in sources.layers:
+        if source in allowed:
+            effective.update(status_line)
+    user_status_line = (user_settings or {}).get(STATUS_LINE_KEY)
+    if isinstance(user_status_line, dict):
+        effective.update(user_status_line)
+    delegate = effective.get("command")
+    if effective.get("type") != "command" or not isinstance(delegate, str) or not delegate or is_tap_command(delegate):
+        return None
+    command = f"{tool_command} {STATUSLINE_SUBCOMMAND} --delegate {shlex.quote(delegate)}"
+    tap: dict[str, Any] = {"type": "command", "command": command}
+    tap.update({key: effective[key] for key in STATUS_LINE_DISPLAY_KEYS if key in effective})
+    return tap
+
+
+def read_settings_file(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_bytes())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def git_dir_of(directory: Path) -> Path | None:
+    """The directory that a `.git` entry in `directory` stands for: itself, or a linked worktree's gitdir."""
+    entry = directory / ".git"
+    if entry.is_dir():
+        return entry
+    try:
+        text = entry.read_text().strip()
+    except OSError:
+        return None
+    if not text.startswith("gitdir:"):
+        return None
+    return (directory / text.removeprefix("gitdir:").strip()).resolve()
+
+
+def canonical_git_root(directory: Path) -> Path | None:
+    """The main checkout of the git repository that `directory` is in, or None outside one. Reads files, runs no git."""
+    for candidate in (directory, *directory.parents):
+        git_dir = git_dir_of(candidate)
+        if git_dir is None:
+            continue
+        try:
+            common = (git_dir / (git_dir / "commondir").read_text().strip()).resolve()
+        except OSError:
+            common = git_dir
+        return common.parent if common.name == ".git" else candidate
+    return None
+
+
+def local_settings_dir(cwd: Path, home: Path) -> Path:
+    """Where Claude Code 2.1.325 reads .claude/settings.local.json for a session started in `cwd`.
+
+    Its `localSettings` path is the canonical root of the git repository the start directory is in, when that is neither
+    the start directory nor the home directory, and the start directory otherwise. A linked worktree or a subdirectory
+    of a repository thus shares the main checkout's local settings.
+    """
+    root = canonical_git_root(cwd)
+    if root is None or root in (cwd, home):
+        return cwd
+    return root
+
+
+def read_status_line_sources(config_dir: Path, cwd: str, platform: str = sys.platform) -> StatusLineSources:
+    resolved = Path(os.path.realpath(cwd))
+    home = Path(os.path.realpath(os.path.expanduser("~")))
+    files = (
+        ("user", config_dir / "settings.json"),
+        ("project", resolved / ".claude" / "settings.json"),
+        ("local", local_settings_dir(resolved, home) / ".claude" / "settings.local.json"),
+    )
+    layers: list[tuple[str, dict[str, Any]]] = []
+    for source, path in files:
+        status_line = (read_settings_file(path) or {}).get(STATUS_LINE_KEY)
+        if isinstance(status_line, dict):
+            layers.append((source, status_line))
+    return StatusLineSources(tuple(layers), managed_status_line(MANAGED_SETTINGS_DIRS.get(platform)))
+
+
+def managed_status_line(directory: Path | None) -> bool:
+    if directory is None:
+        return False
+    paths = [directory / "managed-settings.json"]
+    with contextlib.suppress(OSError):
+        paths += sorted((directory / "managed-settings.d").glob("*.json"))
+    for path in paths:
+        settings = read_settings_file(path) or {}
+        if STATUS_LINE_KEY in settings or settings.get("allowManagedHooksOnly") is True:
+            return True
+    return False
 
 
 def unreadable_file_problem(path: str) -> str | None:
@@ -447,21 +624,36 @@ def build_launch(
 
     # Claude Code keeps only the last --settings flag instead of merging them, so start passes one
     # --settings with every layer merged: the git config attribution, the role's settings, and the
-    # user's own --settings, the last one as Claude Code would take it.
+    # user's own --settings, the last one as Claude Code would take it. The statusLine tap replaces
+    # every statusLine, the user's own included, and runs that one itself.
     settings_args: list[str] = []
     launcher_settings = merge_settings(
         context.git_attribution(context.cwd), role.settings if role is not None else None
     )
+    user_settings, without_settings = remove_option(passed_args, "--settings")
+    # A --settings without a value stays, for claude to report.
+    user_settings = [values for values in user_settings if values]
+    user_layer: dict[str, Any] | None = None
+    tap: dict[str, Any] | None = None
+    sources = context.status_line_sources(profile.config_dir, context.cwd) if profile.capture_rate_limits else None
+    if sources is not None and not sources.managed:
+        try:
+            user_layer = context.read_settings(user_settings[-1][0], context.cwd) if user_settings else None
+        except LaunchError:
+            # Only the tap needs the file then: start leaves the launch as it was, for claude to report the file.
+            if launcher_settings:
+                raise
+        else:
+            tap = status_line_tap(sources, user_layer, args, context.tool_command())
     # Without settings of its own, start leaves the user's --settings as it is.
-    if launcher_settings:
-        user_settings, without_settings = remove_option(passed_args, "--settings")
-        # A --settings without a value stays, for claude to report.
-        user_settings = [values for values in user_settings if values]
+    if launcher_settings or tap is not None:
         if user_settings:
             passed_args = without_settings
-            launcher_settings = merge_settings(
-                launcher_settings, context.read_settings(user_settings[-1][0], context.cwd)
-            )
+            if user_layer is None:
+                user_layer = context.read_settings(user_settings[-1][0], context.cwd)
+            launcher_settings = merge_settings(launcher_settings, user_layer)
+        if tap is not None:
+            launcher_settings[STATUS_LINE_KEY] = tap
         settings_args = ["--settings", json.dumps(launcher_settings, ensure_ascii=False)]
 
     name_args: list[str] = []
@@ -591,6 +783,15 @@ def resolve_profile(
     if not isinstance(refuse_home_cwd, bool):
         raise ConfigError(f"profile '{name}': '{REFUSE_HOME_CWD_KEY}' must be true or false, not {refuse_home_cwd!r}")
 
+    capture_rate_limits = config.get(CAPTURE_RATE_LIMITS_KEY, True)
+    if not isinstance(capture_rate_limits, bool):
+        raise ConfigError(f"'{CAPTURE_RATE_LIMITS_KEY}' must be true or false, not {capture_rate_limits!r}")
+    capture_rate_limits = profile_config.get(CAPTURE_RATE_LIMITS_KEY, capture_rate_limits)
+    if not isinstance(capture_rate_limits, bool):
+        raise ConfigError(
+            f"profile '{name}': '{CAPTURE_RATE_LIMITS_KEY}' must be true or false, not {capture_rate_limits!r}"
+        )
+
     model = profile_config.get("model") or None
     if model is not None and "\0" in str(model):
         raise ConfigError(f"profile '{name}': 'model' contains a NUL character")
@@ -604,6 +805,7 @@ def resolve_profile(
         model=str(model) if model is not None else None,
         default_role=default_role,
         refuse_home_cwd=refuse_home_cwd,
+        capture_rate_limits=capture_rate_limits,
     )
 
 

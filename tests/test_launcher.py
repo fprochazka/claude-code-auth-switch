@@ -286,7 +286,10 @@ def test_launcher_quotes_paths_and_names():
 
 def test_start_does_not_load_the_installer(sandbox):
     # start runs on every launch, so it pays for yaml but not for the installer and the sessions migration.
-    config = sandbox.write("auth-switch.yaml", f"profiles_dir: {sandbox.home / 'profiles'}\nprofiles:\n  work: {{}}\n")
+    config = sandbox.write(
+        "auth-switch.yaml",
+        f"profiles_dir: {sandbox.home / 'profiles'}\ncapture_rate_limits: false\nprofiles:\n  work: {{}}\n",
+    )
     script = (
         "import os, sys\n"
         "from claude_code_auth_switch.cli import main\n"

@@ -45,7 +45,7 @@ The `cc-auth-switch install` command reads `~/.claude/auth-switch.yaml`, creates
     └── ...
 ```
 
-**Why read the config on every launch?** A change to `env`, `model`, `add_dirs`, `pinned_models`, `default_role`, `refuse_home_cwd`, `roles:` or the secrets file applies at the next launch without a reinstall, and the launch logic lives in Python where it can be tested. It costs two things. Each launch takes about 10 ms longer than the bash wrappers of earlier versions, measured on Linux. A broken config or a broken tool install now stops every `claude-*` command, where static wrappers kept working. `cc-auth-switch start` never falls back to a plain `claude`, because that would start Claude under the wrong account: it prints the config path and the error and exits with a non-zero status. See [`cc-auth-switch start`](#cc-auth-switch-start-profile).
+**Why read the config on every launch?** A change to `env`, `model`, `add_dirs`, `pinned_models`, `default_role`, `refuse_home_cwd`, `capture_rate_limits`, `roles:` or the secrets file applies at the next launch without a reinstall, and the launch logic lives in Python where it can be tested. It costs two things. Each launch takes about 10 ms longer than the bash wrappers of earlier versions, measured on Linux. A broken config or a broken tool install now stops every `claude-*` command, where static wrappers kept working. `cc-auth-switch start` never falls back to a plain `claude`, because that would start Claude under the wrong account: it prints the config path and the error and exits with a non-zero status. See [`cc-auth-switch start`](#cc-auth-switch-start-profile).
 
 **Why copy some files and symlink others?** Claude Code uses atomic writes (write-to-temp + `fs.rename`) for config files like `settings.json`. This replaces symlinks with regular files, breaking the link. Directory symlinks are unaffected — files created inside a symlinked directory are real files in the target. See [design decisions](docs/Binary-Analysis-and-Design-Decisions.md) for details.
 
@@ -309,9 +309,9 @@ Precedence, per key: git config wins over the profile's `attribution` in `auth-s
 
 The attribution is fixed when Claude starts. A session started in a personal repository keeps the personal attribution even when it later works in a company directory added with `--add-dir`. Start Claude in the directory whose attribution you want.
 
-Subcommands such as `claude-personal mcp list` do not get the setting. Claude Code keeps only the last `--settings` flag instead of merging them, so `start` passes a single `--settings` JSON. When you pass your own `--settings` to a launcher, as inline JSON or as the path of a JSON file, `start` reads it and deep-merges it last, so your keys win per key. Lists are concatenated without duplicates, as Claude Code merges its own settings sources. When you pass several, `start` uses the last one, as Claude Code would. A file that cannot be read or is not a JSON object stops the launch with the path and the error. When `start` has no settings of its own for the launch, it passes your `--settings` unchanged and does not read it.
+Subcommands such as `claude-personal mcp list` do not get the setting. Claude Code keeps only the last `--settings` flag instead of merging them, so `start` passes a single `--settings` JSON, which also holds the [status line](#rate-limits-from-the-status-line). When you pass your own `--settings` to a launcher, as inline JSON or as the path of a JSON file, `start` reads it and deep-merges it last, so your keys win per key. Lists are concatenated without duplicates, as Claude Code merges its own settings sources. When you pass several, `start` uses the last one, as Claude Code would. A file that cannot be read or is not a JSON object stops the launch with the path and the error. When `start` has no settings of its own for the launch, it passes your `--settings` unchanged. It still reads the file to find your status line, see [Rate limits from the status line](#rate-limits-from-the-status-line); a file that it cannot read then only costs the status line tap, and Claude Code reports the file.
 
-The two cases behave differently in Claude Code. Which one applies depends on whether the start directory has a git config attribution and whether the role has `settings`:
+The two cases behave differently in Claude Code. Which one applies depends on whether the start directory has a git config attribution, whether the role has `settings`, and whether `start` puts its status line tap in front of a status line of yours, which it does by default when you have one, so the second case is the usual one:
 
 - **Nothing to merge:** Claude Code gets your file path, as with plain `claude`. A relative path to the file resolves against the start directory, and Claude Code can see later changes to the file.
 - **Something to merge:** Claude Code gets inline JSON with your file's content, not the file. It cannot see later changes to the file. `start` copies the values as they are, so a relative path inside the file, such as a `statusLine` command `./status.sh`, no longer resolves the way it would for the file. Write absolute paths in a settings file that you pass to a launcher.
@@ -357,6 +357,36 @@ On every start, resume, `/clear`, compaction and fork, the hook appends one line
 Claude Code puts the stdout of a `SessionStart` hook into the model context, so the hook prints nothing and always exits 0. It writes errors to `auth-switch-session-start.log` in the profile directory.
 
 Claude Code deletes the session directory, and the log with it, when it cleans up old transcripts. A session quit before its first prompt has no transcript, and the cleanup leaves its directory behind, because it does not delete files it does not know.
+
+### Rate limits from the status line
+
+Claude Code passes the account's rate limits only to the [status line](https://code.claude.com/docs/en/statusline) command, as `rate_limits` in the JSON on its stdin: the five-hour and weekly windows of a claude.ai subscription, each with `used_percentage` and `resets_at`, and the spend limit of a Claude apps gateway. Reading them needs no credentials and no API call. To keep them for other tools, `start` passes its own status line in the `--settings` JSON of every session it launches: `cc-auth-switch statusline --delegate '<your status line command>'`. On every status line update it:
+
+1. merges `rate_limits` into `auth-switch-rate-limits.json` in the profile directory, writing a temporary file next to it and renaming it into place, with mode `0600`;
+2. replaces itself with `/bin/sh -c '<your command>'`, with the same bytes on stdin. Your command runs in the same process, directory and environment as when Claude Code runs it, and its output and exit status are its own. Before that, the tap undoes what Python changed in its own process: it stops ignoring `SIGPIPE` and `SIGXFSZ`, and puts `LC_CTYPE` back to its value at start, which Python may have set to coerce a C locale to UTF-8.
+
+The tap is a Python program. A `PYTHONHOME` or `PYTHONPATH` in the `env` of your settings, or in the environment you start the launcher in, reaches it too and can stop it from starting; the status line then shows nothing.
+
+**Only with a status line of your own.** Without one, `start` passes no status line and the profile records no rate limits. Any configured status line changes Claude Code's screen: it hides the hint row under the prompt, and in a folder you have not trusted it asks for workspace trust first. A session without a status line therefore keeps having none. To record the limits of such a profile, configure a status line, even one that prints nothing.
+
+A payload without `rate_limits`, as before a session's first response or for an API key or Vertex AI account, writes nothing. An error never reaches the status line: it goes to stderr, which Claude Code shows only in `claude --debug`. On this machine the tap adds about 10 ms to each status line run (`uv run pytest -m perf -s` measures it).
+
+**Which status line is yours.** `start` resolves it when it launches the session, as Claude Code would without the launcher: the `statusLine` of the profile's `settings.json`, then the start directory's `.claude/settings.json`, then `.claude/settings.local.json`, then your own `--settings`, each one over the one before. Claude Code 2.1.325 reads `settings.local.json` from the main checkout of the git repository that the start directory is in, also from a subdirectory or a linked worktree, and `start` does the same. `--setting-sources` leaves out the files it leaves out. The tap copies `padding`, `refreshInterval` and `hideVimModeIndicator` from your status line. A statusLine command that you change in a settings file during a session applies at its next launch, because Claude Code sees only the launcher's command; changes to your script apply at once, as before.
+
+`start` passes no status line when managed settings set a `statusLine` or `allowManagedHooksOnly`, because Claude Code would ignore it, and when `capture_rate_limits: false` is set at the top level of the config or in the profile, the profile's value winning. Turn it off for a profile that never gets rate limits, such as a Vertex AI one, to save the few milliseconds per update.
+
+The file holds one entry per window, merged from every session of the profile:
+
+```json
+{"v": 1, "profile": "work-team", "written_at": 1763290000000, "session_id": "<uuid>", "model": "claude-opus-5-5", "claude_version": "2.1.325", "windows": {"five_hour": {"used_percentage": 23.5, "resets_at": 1763300000, "observed_at": 1763290000000, "changed_at": 1763289000000, "session_id": "<uuid>"}, "seven_day": {"used_percentage": 41.2, "resets_at": 1763800000, "observed_at": 1763290000000, "changed_at": 1763200000000, "session_id": "<uuid>"}}}
+```
+
+- `written_at`, `observed_at` and `changed_at` are epoch milliseconds; `resets_at` is Claude Code's epoch seconds. Claude Code's other keys of a window, such as a spend limit's `used_usd`, `limit_usd` and `period`, are kept as given.
+- `observed_at` is the last time a session reported the stored value, `changed_at` when the value last changed, and `session_id` the session that reported it. The top-level `session_id`, `model` and `claude_version` are those of the session that wrote the file last.
+- **The merge.** A session reports the values of its own last response, so an idle one sends numbers hours old. Within a window the usage only grows, and the next window resets at least one window length later, so the tap keeps the higher value of a window, takes a window that resets later, ignores one that resets earlier, and keeps a window that a payload no longer has: Claude Code drops a window once its reset time has passed. A spend limit, whose length the tap does not know, counts as the same period while its reset time moves by less than five minutes. Unchanged values are written again at most once a minute. A session holds an `flock` on `auth-switch-rate-limits.lock` while it reads, merges and replaces the file, and writes without it when another session holds it for more than 50 ms.
+- **What it cannot see.** A real decrease within a window, such as a `/login` to another account in the same profile, shows only when the window rolls over or after you delete the file. Usage from other machines or claude.ai shows with the next response of a session here.
+
+[cc-blackbox](https://github.com/fprochazka/cc-blackbox) reads this file. Treat the format as a contract: a change needs a new `v`.
 
 ### Sharing sessions between profiles
 
@@ -405,6 +435,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | `source_dir` | `~/.claude` | Directory to copy/symlink shared config from |
 | `bin_dir` | `~/.local/bin` | Where to install the `claude-<name>` launchers |
 | `refuse_home_cwd` | `true` | Boolean. Refuse to start a session in the home directory. See [Starting in the home directory](#starting-in-the-home-directory). |
+| `capture_rate_limits` | `true` | Boolean. Put the status line tap in front of your status line, to record the rate limits. See [Rate limits from the status line](#rate-limits-from-the-status-line). |
 | `profiles_dir` | `~/.claude-profiles` | Where to create the per-profile config directories. `~` is expanded. | Only the profiles listed in the config are managed: the installer never reads for writing, changes or deletes anything in another directory under `profiles_dir`.
 | `profiles.<name>.description` | `""` | Human-readable profile description |
 | `profiles.<name>.model` | | Default model to use (e.g., `sonnet`, `opus`). Overridden by `--model` on the command line. |
@@ -419,6 +450,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | `profiles.<name>.plugins` | `{}` | Map of `"<plugin>@<marketplace>"` to `true` or `false`, applied on top of the `enabledPlugins` copied from `source_dir`. See [Plugins](#plugins). |
 | `profiles.<name>.share_sessions` | `false` | Boolean. Point the profile's `sessions/` at `~/.claude/sessions`, so that its sessions and those of other sharing profiles and plain `claude` can list and message each other. See [Sharing sessions between profiles](#sharing-sessions-between-profiles). |
 | `profiles.<name>.refuse_home_cwd` | top-level `refuse_home_cwd` | Boolean. Wins over the top-level `refuse_home_cwd` for this profile. |
+| `profiles.<name>.capture_rate_limits` | top-level `capture_rate_limits` | Boolean. Wins over the top-level `capture_rate_limits` for this profile. |
 | `profiles.<name>.default_role` | | Name of a role under `roles:` that applies when the command line has no `--agent-role`, or `none` for no role. See [Roles](#roles). |
 | `roles.<name>.description` | | Human-readable role description |
 | `roles.<name>.prompt.file` | | Absolute path of the role's prompt file. `~` is expanded. A file that `start` cannot read stops the launch. |
@@ -461,12 +493,12 @@ cc-auth-switch start [--config PATH] <profile> [claude arguments...]
 
 The `claude-<name>` launchers run this command with the `--config` path that `install` used. Everything after the profile goes to `claude`, except `--agent-role` and a `--settings` that `start` merges into its own. In this order, `start`:
 
-1. Reads the config and the secrets file, and resolves the profile's `env`, `pinned_models`, `model`, `add_dirs`, `default_role` and `refuse_home_cwd`, and the `roles:` section.
+1. Reads the config and the secrets file, and resolves the profile's `env`, `pinned_models`, `model`, `add_dirs`, `default_role`, `refuse_home_cwd` and `capture_rate_limits`, and the `roles:` section.
 2. Removes `--agent-role` from the start of the arguments.
 3. Drops every inherited `CLAUDE_*` and `ANTHROPIC_*` variable, the `FP_CC_AUTH_SWITCH_ROLE*` variables, and every variable that `FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS` names while it still holds the role's value, so a launch from inside another Claude Code session does not inherit its account or its role. Then it sets `CLAUDE_CONFIG_DIR`, `FP_CC_AUTH_SWITCH_PROFILE` and the profile's `env`. It also drops `CC_AUTH_SWITCH_ALLOW_HOME`.
 4. Passes the arguments through when the first one is a Claude Code subcommand such as `mcp`, `auth` or `plugin`, because subcommands reject the session options. It does the same when the option `-v`, `--version`, `-h` or `--help` comes before any `--`, because `claude` then prints and exits without a session. The value of another option, as in `--name -v`, does not count.
 5. Otherwise stops when the start directory is the home directory, unless `refuse_home_cwd` is off for the profile or `CC_AUTH_SWITCH_ALLOW_HOME=1` is set. See [Starting in the home directory](#starting-in-the-home-directory).
-6. Otherwise puts its own arguments before yours, and picks the [role](#roles), also the role a [resumed session](#resuming-a-session-with-a-role) ran as, sets its `env` and the role variables, and adds `--add-dir=<dir>` for each `add_dirs` entry of the profile and the role, `--settings` with the [attribution from git config](#attribution-from-git-config), the role's `settings` and your own `--settings` merged into it, the [tmux session name](#session-names-in-tmux), the role's flags, `--system-prompt-snapshot off` when a resume switches the role, and `--model`. It adds the name, the model and the role's single-value flags only when you did not pass the same option yourself.
+6. Otherwise puts its own arguments before yours, and picks the [role](#roles), also the role a [resumed session](#resuming-a-session-with-a-role) ran as, sets its `env` and the role variables, and adds `--add-dir=<dir>` for each `add_dirs` entry of the profile and the role, `--settings` with the [attribution from git config](#attribution-from-git-config), the role's `settings` and your own `--settings` merged into it and the [status line tap](#rate-limits-from-the-status-line) in place of every `statusLine`, the [tmux session name](#session-names-in-tmux), the role's flags, `--system-prompt-snapshot off` when a resume switches the role, and `--model`. It adds the name, the model and the role's single-value flags only when you did not pass the same option yourself.
 7. Prints its notes to stderr, and replaces itself with `claude`.
 
 A config that is missing, cannot be parsed, or fails validation stops the launch. So does a profile that the config no longer defines, a secrets file that is invalid, unreadable or not ignored by git, a start in the home directory, an unknown `--agent-role`, a role whose prompt file `start` cannot read, and a `--settings` file that `start` cannot read. `start` then prints the config path and the error and exits with a non-zero status, without starting Claude. Any other error in `start` also stops the launch, with one line that names the profile, the config path and the error. Fix the config and launch again; a reinstall is only needed for the settings that `install` writes into the profile directory.
@@ -491,7 +523,8 @@ A config that is missing, cannot be parsed, or fails validation stops the launch
 | **Copied** | `settings.json`, `settings.local.json`, `keybindings.json`, and all top-level `*.md` files (e.g. `CLAUDE.md`) | Copied on first install. Use `--sync` to refresh from source. |
 | **Symlinked** | `commands/`, `skills/`, `agents/`, `plugins/`, `projects/`, `scripts/` | Always symlinked. Changes are shared across all profiles. |
 | **Patched** | `settings.json` (`attribution`, `plansDirectory`, `hooks.SessionStart`) | Set from profile config on every install. The installer creates the file when `source_dir` has none. See [Profile start log](#profile-start-log) for the hook. |
-| **Per launch** | `--settings` (`attribution`, the role's `settings`) | Read from git config for the start directory and from the role every time a launcher starts Claude. Never written to disk. See [Attribution from git config](#attribution-from-git-config) and [Roles](#roles). |
+| **Per launch** | `--settings` (`attribution`, the role's `settings`, `statusLine`) | Read from git config for the start directory, from the role and from your status line every time a launcher starts Claude. Never written to disk. See [Attribution from git config](#attribution-from-git-config), [Roles](#roles) and [Rate limits from the status line](#rate-limits-from-the-status-line). |
+| **Written by the status line** | `auth-switch-rate-limits.json` | The rate limits that the profile's sessions reported. See [Rate limits from the status line](#rate-limits-from-the-status-line). |
 | **Synced on every install** | `settings.json` (`enabledPlugins`, `extraKnownMarketplaces`) | Copied whole from `source_dir`'s `settings.json`, then the profile's `plugins:` overrides are applied. See [Plugins](#plugins). |
 | **Selectively synced** | `.claude.json` (`mcpServers`) | Only the `mcpServers` key is synced from `~/.claude.json` on every install. Other keys in `.claude.json` are per-profile state. |
 | **Shared on request** | `sessions/` | A real per-profile directory by default. With `share_sessions: true`, a symlink to `~/.claude/sessions`. |
@@ -502,7 +535,7 @@ A config that is missing, cannot be parsed, or fails validation stops the launch
 ```bash
 # Added or removed a profile, or changed attribution, plansDirectory, plugins or share_sessions → re-run install
 # (also syncs mcpServers from ~/.claude.json into each profile).
-# env, model, add_dirs, pinned_models, default_role, refuse_home_cwd, roles and the secrets file apply at the next launch without it.
+# env, model, add_dirs, pinned_models, default_role, refuse_home_cwd, capture_rate_limits, roles and the secrets file apply at the next launch without it.
 cc-auth-switch install
 
 # Changed ~/.claude/settings.json and want profiles to pick it up
@@ -684,7 +717,7 @@ The tool has no releases: no version bumps, no tags, no PyPI package and no GitH
 Users then update in two steps:
 
 1. Update the tool. An install from GitHub updates with `uv tool upgrade claude-code-auth-switch`, or with `uv tool install --reinstall git+https://github.com/fprochazka/claude-code-auth-switch.git`. An editable install updates when you pull its checkout. For an editable install, `uv tool upgrade` only refreshes the dependencies.
-2. Run `cc-auth-switch install`. It regenerates the launchers and patches each profile's `settings.json`, so they match the new code. Every launcher runs `cc-auth-switch start`, and the `SessionStart` hook runs `cc-auth-switch session-start`, so a change to either takes effect at the next launch without this step. That covers how `start` reads the config and builds the environment and the arguments: `env`, secrets, `pinned_models`, `model`, `add_dirs`, roles, the git config attribution and the tmux name. A change to what `install` writes still needs this step: the launcher line, the patches to the profiles' `settings.json` (`attribution`, `plansDirectory`, the plugin keys, the hook), the copied and symlinked files, and `sessions/` sharing.
+2. Run `cc-auth-switch install`. It regenerates the launchers and patches each profile's `settings.json`, so they match the new code. Every launcher runs `cc-auth-switch start`, and the `SessionStart` hook runs `cc-auth-switch session-start`, so a change to either takes effect at the next launch without this step. That covers how `start` reads the config and builds the environment and the arguments: `env`, secrets, `pinned_models`, `model`, `add_dirs`, roles, the git config attribution, the status line tap and the tmux name. A change to what `install` writes still needs this step: the launcher line, the patches to the profiles' `settings.json` (`attribution`, `plansDirectory`, the plugin keys, the hook), the copied and symlinked files, and `sessions/` sharing.
 
 Check the output of `cc-auth-switch install`: it lists what changed under each profile and the path of every backup it made, see [Re-syncing after config changes](#re-syncing-after-config-changes).
 

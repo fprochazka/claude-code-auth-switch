@@ -7,8 +7,8 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
-    # Every launcher runs `start`, and Claude Code runs `session-start` on every session start. They
-    # skip argparse and import only what they need; the installer stays unloaded on these paths.
+    # Every launcher runs `start`, Claude Code runs `session-start` on every session start and `statusline` after
+    # every response. They skip argparse and import only what they need; the installer stays unloaded on these paths.
     # `start` passes everything after the profile to Claude unchanged, so argparse must not see it.
     command = argv[0] if argv else None
     if command == "start":
@@ -23,6 +23,10 @@ def main(argv: list[str] | None = None) -> int:
         from claude_code_auth_switch import session_start
 
         return session_start.main()
+    if command == "statusline":
+        from claude_code_auth_switch import statusline
+
+        return statusline.main(argv[1:])
 
     return run_management_command(argv)
 
@@ -72,6 +76,12 @@ def run_management_command(argv: list[str]) -> int:
     commands.add_parser(
         "session-start",
         help="Record the profile of a starting session (run by the SessionStart hook)",
+    )
+
+    commands.add_parser(
+        "statusline",
+        help="Record the rate limits from Claude Code's status line input, then run your own status line (set by start)",
+        usage=f"{PROG} statusline [--delegate COMMAND]",
     )
 
     rollback_parser = commands.add_parser(

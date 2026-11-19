@@ -34,7 +34,9 @@ FAKE_TMUX = """\
 printf '%s\\n' "$FAKE_TMUX_SESSION"
 """
 
+# The legacy wrappers had no status line tap, so the comparison leaves it out.
 PROFILES = """\
+capture_rate_limits: false
 profiles:
   plain:
     description: no model

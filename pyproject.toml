@@ -24,6 +24,9 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `uv run pytest -m perf -s` measures what the status line tap adds; wall-clock time is too noisy to run by default.
+markers = ["perf: timing measurements, deselected by default"]
+addopts = "-m 'not perf'"
 
 [tool.ruff]
 line-length = 120
@@ -67,6 +70,8 @@ module = [
     "test_sessions",
     "test_session_start",
     "test_start_matches_legacy_wrapper",
+    "test_statusline",
+    "test_statusline_launch",
     "test_sync_backups",
     "test_wrapper",
 ]

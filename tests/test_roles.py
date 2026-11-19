@@ -516,6 +516,7 @@ def role_launch(sandbox):
     config = sandbox.write(
         "auth-switch.yaml",
         f"source_dir: {source_dir}\nbin_dir: {sandbox.home / 'bin'}\nprofiles_dir: {sandbox.home / 'profiles'}\n"
+        "capture_rate_limits: false\n"
         "profiles:\n  work:\n    default_role: dispatcher\n"
         f"roles:\n  dispatcher:\n    prompt: {{file: {prompt}, mode: append}}\n    model: opus\n    env: {{ROLE_ONLY: '1'}}\n",
     )

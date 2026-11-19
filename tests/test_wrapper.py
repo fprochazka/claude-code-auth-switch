@@ -39,6 +39,8 @@ def installed(sandbox):
         f"source_dir: {source_dir}\n"
         f"bin_dir: {bin_dir}\n"
         f"profiles_dir: {profiles_dir}\n"
+        # These tests check the other arguments; test_statusline_launch.py covers the status line tap.
+        "capture_rate_limits: false\n"
         "profiles:\n"
         "  plain:\n"
         "    description: no model\n"

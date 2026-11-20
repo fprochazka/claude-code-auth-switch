@@ -54,6 +54,7 @@ def test_hook_appends_the_contract_line(hook_env):
         "role": None,
         "role_prompt": None,
         "role_prompt_mode": None,
+        "role_prompt_files": None,
     }
 
 
@@ -63,18 +64,30 @@ def test_hook_records_the_role_from_the_environment(hook_env):
         "FP_CC_AUTH_SWITCH_ROLE": "dispatcher",
         "FP_CC_AUTH_SWITCH_ROLE_PROMPT": "/roles/dispatcher.md",
         "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE": "append",
+        "FP_CC_AUTH_SWITCH_ROLE_PROMPT_FILES": json.dumps(["/roles/dispatcher.md"]),
     }
 
     run_hook({**env, **role_env, "CLAUDE_PID": "4242"}, json.dumps({**payload, "source": "resume"}))
 
     [line] = read_lines(log)
-    assert (line["v"], line["source"], line["role"], line["role_prompt"], line["role_prompt_mode"]) == (
-        1,
-        "resume",
-        "dispatcher",
-        "/roles/dispatcher.md",
-        "append",
-    )
+    assert (
+        line["v"],
+        line["source"],
+        line["role"],
+        line["role_prompt"],
+        line["role_prompt_mode"],
+        line["role_prompt_files"],
+    ) == (1, "resume", "dispatcher", "/roles/dispatcher.md", "append", ["/roles/dispatcher.md"])
+
+
+@pytest.mark.parametrize("value", ["", "not json", '{"a": 1}', '["/a.md", 3]'])
+def test_hook_records_invalid_prompt_files_as_null(hook_env, value):
+    env, payload, profile_dir, log = hook_env
+
+    run_hook({**env, "FP_CC_AUTH_SWITCH_ROLE_PROMPT_FILES": value, "CLAUDE_PID": "4242"}, json.dumps(payload))
+
+    [line] = read_lines(log)
+    assert line["role_prompt_files"] is None
 
 
 def test_hook_records_a_start_without_a_role_as_none(hook_env):

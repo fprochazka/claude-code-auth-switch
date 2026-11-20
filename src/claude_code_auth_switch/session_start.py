@@ -12,7 +12,7 @@ see in Claude Code's own records once several profiles share one sessions/ direc
 format is a contract with those readers:
 
     {"v": 1, "ts": <epoch ms>, "session_id": ..., "pid": ..., "source": ..., "profile": ..., "config_dir": ...,
-     "cwd": ..., "role": ..., "role_prompt": ..., "role_prompt_mode": ...}
+     "cwd": ..., "role": ..., "role_prompt": ..., "role_prompt_mode": ..., "role_prompt_files": [...]}
 
 The role fields come from the FP_CC_AUTH_SWITCH_ROLE* variables that `start` sets; readers that know
 only the older fields ignore them, so the format stays version 1.
@@ -91,7 +91,17 @@ def build_line(payload: dict[str, Any], now_ms: int) -> dict[str, Any]:
         "role": os.environ.get("FP_CC_AUTH_SWITCH_ROLE") or None,
         "role_prompt": os.environ.get("FP_CC_AUTH_SWITCH_ROLE_PROMPT") or None,
         "role_prompt_mode": os.environ.get("FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE") or None,
+        "role_prompt_files": prompt_files(os.environ.get("FP_CC_AUTH_SWITCH_ROLE_PROMPT_FILES")),
     }
+
+
+def prompt_files(value: str | None) -> list[str] | None:
+    """The role's prompt files from the JSON array that start sets, or None without one or for an invalid value."""
+    try:
+        files = json.loads(value) if value else None
+    except ValueError:
+        return None
+    return files if isinstance(files, list) and all(isinstance(file, str) for file in files) else None
 
 
 def record(stdin_text: str) -> None:

@@ -47,6 +47,7 @@ def context(environ=None, attribution=None, files=("/roles/dispatcher.md", "/rol
         tmux_session=lambda pane: None,
         git_attribution=lambda cwd: attribution,
         prompt_file_problem=lambda path: None if path in files else "No such file or directory",
+        join_prompt_files=lambda role, sources: f"/cache/{role}-{len(sources)}.md",
     )
 
 
@@ -511,6 +512,92 @@ def test_missing_prompt_file_stops_the_launch_with_the_path():
             build_launch(profile, args, context(files=()), ROLES)
 
 
+PAIR = ["/roles/dispatcher.md", "/roles/worker.md"]
+
+
+@pytest.mark.parametrize(
+    "mode, flag",
+    [
+        ("append", ["--append-system-prompt-file", "/cache/pair-2.md"]),
+        ("replace", ["--system-prompt-file", "/cache/pair-2.md"]),
+        ("none", []),
+    ],
+)
+def test_several_prompt_files_reach_claude_and_the_hooks_as_one_joined_file(mode, flag):
+    launch = build_launch(
+        PROFILE, ["--agent-role", "pair"], context(), roles(pair={"prompt": {"files": PAIR, "mode": mode}})
+    )
+
+    assert launch.argv == ["--add-dir=/profile dir", *flag, "--model", "sonnet"]
+    assert [launch.env[key] for key in (*ROLE_ENV, "FP_CC_AUTH_SWITCH_ROLE_PROMPT_FILES")] == [
+        "pair",
+        "/cache/pair-2.md",
+        mode,
+        json.dumps(PAIR),
+    ]
+
+
+def test_one_prompt_file_passes_its_own_path_without_joining():
+    def join(role, sources):
+        raise AssertionError("joined a single prompt file")
+
+    ctx = dataclasses.replace(context(), join_prompt_files=join)
+    for prompt in ({"file": "/roles/worker.md"}, {"files": ["/roles/worker.md"]}):
+        launch = build_launch(PROFILE, ["--agent-role", "one"], ctx, roles(one={"prompt": prompt}))
+        assert launch.argv[1:3] == ["--append-system-prompt-file", "/roles/worker.md"]
+        assert (launch.env["FP_CC_AUTH_SWITCH_ROLE_PROMPT"], launch.env["FP_CC_AUTH_SWITCH_ROLE_PROMPT_FILES"]) == (
+            "/roles/worker.md",
+            json.dumps(["/roles/worker.md"]),
+        )
+
+
+def test_an_unreadable_second_prompt_file_stops_the_launch_also_for_a_default_or_resumed_role():
+    pair = roles(pair={"prompt": {"files": PAIR}})
+    profile = dataclasses.replace(PROFILE, default_role="pair")
+    message = "role 'pair': cannot read the prompt file /roles/worker.md: No such file or directory"
+
+    for args, recorded in ((["--agent-role", "pair"], None), ([], None), (["--resume", SESSION], {"role": "pair"})):
+        with pytest.raises(LaunchError, match=message):
+            build_launch(profile, args, resume_context(recorded=recorded, files=PAIR[:1])[0], pair)
+
+
+def test_a_prompt_cache_that_cannot_be_written_stops_the_launch():
+    def join(role, sources):
+        raise PermissionError(13, "Permission denied", "/cache")
+
+    ctx = dataclasses.replace(context(), join_prompt_files=join)
+    with pytest.raises(
+        LaunchError, match="role 'pair': cannot join the prompt files into one file: .*Permission denied"
+    ):
+        build_launch(PROFILE, ["--agent-role", "pair"], ctx, roles(pair={"prompt": {"files": PAIR}}))
+
+
+def test_a_users_own_prompt_file_flag_leaves_the_joined_file_to_the_hooks():
+    launch = build_launch(
+        PROFILE,
+        ["--agent-role", "pair", "--append-system-prompt-file", "/mine.md"],
+        context(),
+        roles(pair={"prompt": {"files": PAIR}}),
+    )
+
+    assert launch.argv.count("--append-system-prompt-file") == 1 and launch.argv[-2:] == [
+        "--append-system-prompt-file",
+        "/mine.md",
+    ]
+    assert (launch.env["FP_CC_AUTH_SWITCH_ROLE_PROMPT"], launch.env["FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE"]) == (
+        "/cache/pair-2.md",
+        "none",
+    )
+    assert len(launch.notes) == 1
+
+
+def test_inherited_prompt_files_are_cleared():
+    inherited = {"FP_CC_AUTH_SWITCH_ROLE_PROMPT_FILES": json.dumps(PAIR)}
+
+    for args in ([], ["--agent-role", "bare"], ["mcp", "list"]):
+        assert "FP_CC_AUTH_SWITCH_ROLE_PROMPT_FILES" not in build_launch(PROFILE, args, context(inherited), ROLES).env
+
+
 def test_unreadable_file_problem_names_why_a_file_cannot_be_read(tmp_path):
     readable = tmp_path / "readable.md"
     readable.write_text("x")
@@ -616,6 +703,21 @@ def test_launcher_refuses_a_default_role_whose_prompt_file_cannot_be_read(role_l
 
     assert (result.returncode, result.stdout) == (2, "")
     assert f"role 'dispatcher': cannot read the prompt file {prompt}: Permission denied" in result.stderr
+
+
+def test_launcher_joins_several_prompt_files_into_a_private_cache_file(role_launch, sandbox):
+    run, config, prompt = role_launch
+    second = sandbox.write("roles/sdlc.md", "Use sdlc.")
+    config.write_text(config.read_text().replace(f"file: {prompt}", f"files: [{prompt}, {second}]"))
+
+    result = json.loads(run("-p", "hi").stdout)
+
+    joined = Path(result["env"]["FP_CC_AUTH_SWITCH_ROLE_PROMPT"])
+    assert result["argv"][:2] == ["--append-system-prompt-file", str(joined)]
+    assert joined.parent == sandbox.home / ".cache/cc-auth-switch/role-prompts"
+    assert joined.name.startswith("dispatcher-")
+    assert joined.read_text() == "You dispatch.\n\nUse sdlc.\n"
+    assert (joined.stat().st_mode & 0o777, joined.parent.stat().st_mode & 0o777) == (0o600, 0o700)
 
 
 def test_install_and_start_refuse_an_invalid_role(role_launch, sandbox):

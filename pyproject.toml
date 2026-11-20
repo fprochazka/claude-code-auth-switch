@@ -66,6 +66,7 @@ module = [
     "test_launcher",
     "test_plugins",
     "test_profile_writes",
+    "test_role_prompt_cache",
     "test_roles",
     "test_sessions",
     "test_session_start",

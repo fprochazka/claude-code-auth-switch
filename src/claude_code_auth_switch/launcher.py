@@ -29,6 +29,7 @@ from typing import Any, cast
 
 from claude_code_auth_switch.claude_options import has_option, remove_option, scan
 from claude_code_auth_switch.config import ENV_NAME, ConfigError
+from claude_code_auth_switch.role_prompt_cache import cache_dir, joined_prompt_file
 from claude_code_auth_switch.roles import NO_ROLE, Role, resolve_roles
 
 PROG = "cc-auth-switch start"
@@ -77,13 +78,15 @@ CLEARED_ENV_PREFIXES = ("CLAUDE_", "ANTHROPIC_")
 ROLE_ENV = "FP_CC_AUTH_SWITCH_ROLE"
 ROLE_PROMPT_ENV = "FP_CC_AUTH_SWITCH_ROLE_PROMPT"
 ROLE_PROMPT_MODE_ENV = "FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE"
+# The role's prompt files as a JSON array, in order. ROLE_PROMPT_ENV names the file that holds their joined text.
+ROLE_PROMPT_FILES_ENV = "FP_CC_AUTH_SWITCH_ROLE_PROMPT_FILES"
 # NAME=<hash of the value> for each variable that the role's env: set, comma-separated. The next launch
 # from inside the session clears a listed variable while it still holds the role's value, so a worker
 # started from a dispatcher's Bash does not inherit its role's env, and a value the user set since stays.
 # The hash keeps a secret in a role's env out of every child process's environment.
 ROLE_ENV_KEYS_ENV = "FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS"
 ROLE_ENV_HASH_LENGTH = 16
-ROLE_ENV_VARS = (ROLE_ENV, ROLE_PROMPT_ENV, ROLE_PROMPT_MODE_ENV, ROLE_ENV_KEYS_ENV)
+ROLE_ENV_VARS = (ROLE_ENV, ROLE_PROMPT_ENV, ROLE_PROMPT_MODE_ENV, ROLE_PROMPT_FILES_ENV, ROLE_ENV_KEYS_ENV)
 
 # Set to 1 to get the traceback of an unexpected error in `start` instead of a one-line message.
 DEBUG_ENV = "CC_AUTH_SWITCH_DEBUG"
@@ -177,6 +180,10 @@ class LaunchContext:
     read_settings: Callable[[str, str], dict[str, Any]] = lambda value, cwd: read_settings_value(value, cwd)
     # Why a role's prompt file cannot be read, or None when it can.
     prompt_file_problem: Callable[[str], str | None] = lambda path: unreadable_file_problem(path)
+    # The path of one file with the joined text of a role's prompt files (role name, files). Raises OSError.
+    join_prompt_files: Callable[[str, Sequence[str]], str] = lambda role, files: joined_prompt_file(
+        role, files, cache_dir(os.environ)
+    )
     # The newest start-log line of a session (config dir, session id, cwd), or None without a readable log.
     recorded_start: Callable[[Path, str, str], dict[str, Any] | None] = lambda config_dir, session_id, cwd: (
         recorded_start_of(config_dir, session_id, cwd)
@@ -601,9 +608,18 @@ def build_launch(
             )
         env[ROLE_ENV] = role.name
         if role.prompt is not None:
+            for source in role.prompt.files:
+                if problem := context.prompt_file_problem(source):
+                    raise LaunchError(f"role '{role.name}': cannot read the prompt file {source}: {problem}")
+            # Claude Code keeps only the last prompt file flag, so several files reach it as one joined file.
             prompt_file = role.prompt.files[0]
-            if problem := context.prompt_file_problem(prompt_file):
-                raise LaunchError(f"role '{role.name}': cannot read the prompt file {prompt_file}: {problem}")
+            if len(role.prompt.files) > 1:
+                try:
+                    prompt_file = context.join_prompt_files(role.name, role.prompt.files)
+                except OSError as error:
+                    raise LaunchError(
+                        f"role '{role.name}': cannot join the prompt files into one file: {error}"
+                    ) from error
             mode = role.prompt.mode
             if mode in PROMPT_FLAGS:
                 flag, user_flags = PROMPT_FLAGS[mode]
@@ -617,6 +633,7 @@ def build_launch(
                 else:
                     prompt_args = [flag, prompt_file]
             env[ROLE_PROMPT_ENV] = prompt_file
+            env[ROLE_PROMPT_FILES_ENV] = json.dumps(list(role.prompt.files), ensure_ascii=False)
             env[ROLE_PROMPT_MODE_ENV] = mode
 
     model = role.model if role is not None and role.model else profile.model

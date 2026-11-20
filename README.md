@@ -198,7 +198,7 @@ These variables only take effect when you launch through the `claude-<name>` lau
 
 ### Roles
 
-A role is a named set of launch options: a system prompt file, a model, tools, settings and more. Roles are a top-level `roles:` section, not part of a profile, so `claude-personal --agent-role dispatcher` and `claude-work-team --agent-role dispatcher` start the same role under different accounts.
+A role is a named set of launch options: system prompt files, a model, tools, settings and more. Roles are a top-level `roles:` section, not part of a profile, so `claude-personal --agent-role dispatcher` and `claude-work-team --agent-role dispatcher` start the same role under different accounts.
 
 ```yaml
 roles:
@@ -234,15 +234,38 @@ Every key maps to one `claude` flag, see the [configuration reference](#auth-swi
 - The role's `settings`, the [git config attribution](#attribution-from-git-config) and your own `--settings` are deep-merged into one `--settings` JSON, the role over the attribution and yours over both. Lists inside settings, such as `permissions.allow`, are concatenated.
 - `extra_args` go in as written, after the role's other flags and before yours, for any `claude` flag that the role keys do not cover. Because your arguments follow right after them, every item must be an option that cannot take your first word as its value: an option without a value, such as `--verbose`, or a long option with its value in the same item, `--flag=value`, such as `--add-dir=/a` or `--debug=api`. The config check refuses a separate value item, an option that takes a value written without `=`, and an unknown option without `=`, naming the role and the item. Which options take no value comes from the option table of Claude Code 2.1.325, see [`cc-auth-switch start`](#cc-auth-switch-start-profile). A hidden option with a value, such as `--max-turns=3`, works in the `=` form.
 
-No role string that reaches the `claude` command line or the environment may contain a NUL character. `prompt.file` must be an absolute path (`~` is expanded). When `start` cannot read the file, because it does not exist, is not a regular file or lacks read permission, `start` stops with the path and the reason instead of starting without the role. This holds for a profile's `default_role` and a resumed session's role too. `prompt.mode` decides how the text gets into the session:
+No role string that reaches the `claude` command line or the environment may contain a NUL character. The prompt is one file in `prompt.file`, or several in the list `prompt.files`, never both. Each path must be absolute (`~` is expanded), and `prompt.files` may not name a file twice. When `start` cannot read a prompt file, because it does not exist, is not a regular file or lacks read permission, `start` stops with the path and the reason instead of starting without the role. This holds for a profile's `default_role` and a resumed session's role too. Several files reach the session as one file that joins them, see [Several prompt files](#several-prompt-files). `prompt.mode` decides how the text gets into the session:
 
-- `append` (the default) passes `--append-system-prompt-file`. The text comes after Claude Code's own system prompt.
-- `replace` passes `--system-prompt-file`. The text replaces Claude Code's system prompt.
-- `none` passes no flag. A `SessionStart` hook of your own injects the text, reading the path from `FP_CC_AUTH_SWITCH_ROLE_PROMPT`.
+- `append` (the default) passes `--append-system-prompt-file` with the prompt file. The text comes after Claude Code's own system prompt.
+- `replace` passes `--system-prompt-file` with the prompt file. The text replaces Claude Code's system prompt.
+- `none` passes no flag. A `SessionStart` hook of your own injects the text, reading the path of the prompt file from `FP_CC_AUTH_SWITCH_ROLE_PROMPT`.
 
 The system prompt flags are used instead of a hook by default because Claude Code moves a hook's `additionalContext` above 10,000 characters into a file and keeps only a short preview in context. The system prompt has no such limit, and it survives compaction. If you pass the matching system prompt flag yourself, yours wins: `start` drops the role's flag, sets the prompt mode to `none` so that a hook can inject the role's text, and prints a note.
 
 `start` clears the role variables that it inherits, then sets them for the role it applies, see [Environment variables](#environment-variables). The role's `env` is merged over the profile's. `start` lists the names it set in `FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS`, each with a hash of its value, and a launch from inside that session clears a listed variable while it still holds the role's value. A worker started from a dispatcher's Bash therefore does not inherit the dispatcher role's env, and a value that you set yourself since, as in `FOO=mine claude-personal`, stays. The list carries hashes, not values, because every process started from the session inherits it, a tmux server included. A role cannot set the variables that the profile or `start` own, or that a launch from inside the session needs: `CLAUDE_CONFIG_DIR`, `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `PWD`, `OLDPWD`, `SHLVL`, `LANG`, `TERM`, `DISPLAY`, `WAYLAND_DISPLAY`, and every name that starts with `FP_CC_AUTH_SWITCH_`, `LC_`, `TMUX`, `XDG_`, `SSH_` or `LD_`.
+
+#### Several prompt files
+
+`prompt.files` lets a role combine a shared prompt with your own additions, for example a public `dispatcher.md` and a private file next to your config:
+
+```yaml
+roles:
+  dispatcher:
+    prompt:
+      files:
+        - /home/you/devel/claude-code-plugins/plugins/agent-roles/roles/dispatcher.md
+        - ~/.claude/roles/dispatcher-private.md
+      mode: append
+```
+
+Claude Code 2.1.325 keeps only the last `--append-system-prompt-file`, and the last `--system-prompt-file`, so `start` cannot pass the flag once per file. On every launch it reads the files in order and joins them into one file: each file as it is, with a newline added when it does not end with one, and a blank line between files. It writes the result to `${XDG_CACHE_HOME:-~/.cache}/cc-auth-switch/role-prompts/<role>-<hash>.md`, where `<hash>` is the start of the SHA-256 of the joined text, and passes that path everywhere a single prompt file goes: the flag, `FP_CC_AUTH_SWITCH_ROLE_PROMPT` and `role_prompt` in the [start log](#profile-start-log). A role with one file, in `file` or in a one-item `files`, gets the path of that file, as before.
+
+- **Private.** The file has mode `0600`, and a directory that `start` creates has mode `0700`, because the text may be private.
+- **Never changed under a session.** An edited source gives a new hash and a new file, so a running session keeps reading the text it started with, also when a hook re-reads the file on `/clear` or compaction. A launch with unchanged sources reuses the file and only updates its modification time.
+- **Cleaned up after 30 days.** After `start` writes a new file, it deletes the files in that directory that no launch has used for 30 days. A session that runs longer and re-reads the file in mode `none` finds it gone, and `role_prompt` in an old start log may name a deleted file.
+- **Stops the launch on failure.** When `start` cannot write the file, it stops with the error instead of starting without the role.
+
+`FP_CC_AUTH_SWITCH_ROLE_PROMPT_FILES` and `role_prompt_files` in the start log list the source files.
 
 #### Resuming a session with a role
 
@@ -343,14 +366,14 @@ Claude Code records nothing about the profile in a session's files. To let other
 On every start, resume, `/clear`, compaction and fork, the hook appends one line to `auth-switch-profile-starts.jsonl` in the session's directory, `projects/<project>/<session-id>/`:
 
 ```json
-{"v": 1, "ts": 1763290000000, "session_id": "<uuid>", "pid": 12345, "source": "startup", "profile": "work-team", "config_dir": "/home/you/.claude-profiles/work-team", "cwd": "/home/you/devel/projects/company/service", "role": "dispatcher", "role_prompt": "/home/you/devel/claude-code-plugins/plugins/agent-roles/roles/dispatcher.md", "role_prompt_mode": "append"}
+{"v": 1, "ts": 1763290000000, "session_id": "<uuid>", "pid": 12345, "source": "startup", "profile": "work-team", "config_dir": "/home/you/.claude-profiles/work-team", "cwd": "/home/you/devel/projects/company/service", "role": "dispatcher", "role_prompt": "/home/you/devel/claude-code-plugins/plugins/agent-roles/roles/dispatcher.md", "role_prompt_mode": "append", "role_prompt_files": ["/home/you/devel/claude-code-plugins/plugins/agent-roles/roles/dispatcher.md"]}
 ```
 
 - `ts` is the time in epoch milliseconds.
 - `pid` is the Claude Code process, the one that writes `sessions/<pid>.json`. It is `null` when the hook cannot find it.
 - `source` is `startup`, `resume`, `clear`, `compact` or `fork`.
 - `profile` and `config_dir` come from `FP_CC_AUTH_SWITCH_PROFILE` and `CLAUDE_CONFIG_DIR`, and are `null` when a session starts without a launcher.
-- `role`, `role_prompt` and `role_prompt_mode` come from `FP_CC_AUTH_SWITCH_ROLE`, `FP_CC_AUTH_SWITCH_ROLE_PROMPT` and `FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE`, see [Environment variables](#environment-variables). Each is `null` when its variable is unset. `role` is `"none"` when the launch explicitly asked for no role, and `null` when nothing chose one or the session started without a launcher. Lines written before these fields existed lack them; read a missing field as `null`.
+- `role`, `role_prompt`, `role_prompt_mode` and `role_prompt_files` come from `FP_CC_AUTH_SWITCH_ROLE`, `FP_CC_AUTH_SWITCH_ROLE_PROMPT`, `FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE` and `FP_CC_AUTH_SWITCH_ROLE_PROMPT_FILES`, see [Environment variables](#environment-variables). Each is `null` when its variable is unset, and `role_prompt_files` also when its value is not a JSON array of strings. `role_prompt` is the file whose text the session got: the role's only prompt file, or the file that joins [several prompt files](#several-prompt-files), which the cleanup may have deleted since. `role_prompt_files` lists the role's prompt files. `role` is `"none"` when the launch explicitly asked for no role, and `null` when nothing chose one or the session started without a launcher. Lines written before these fields existed lack them; read a missing field as `null`.
 
 [cc-blackbox](https://github.com/fprochazka/cc-blackbox) reads this file. Treat the format as a contract: a change needs a new `v`.
 
@@ -454,6 +477,7 @@ The default config path is `~/.claude/auth-switch.yaml`. When that file does not
 | `profiles.<name>.default_role` | | Name of a role under `roles:` that applies when the command line has no `--agent-role`, or `none` for no role. See [Roles](#roles). |
 | `roles.<name>.description` | | Human-readable role description |
 | `roles.<name>.prompt.file` | | Absolute path of the role's prompt file. `~` is expanded. A file that `start` cannot read stops the launch. |
+| `roles.<name>.prompt.files` | | List of absolute paths of prompt files, instead of `prompt.file`. `~` is expanded. `start` joins them in this order into one file, see [Several prompt files](#several-prompt-files). |
 | `roles.<name>.prompt.mode` | `append` | `append` passes `--append-system-prompt-file`, `replace` passes `--system-prompt-file`, `none` passes nothing and leaves the text to a hook. |
 | `roles.<name>.model` | | `--model`. Replaces the profile's `model`; your own `--model` replaces both. |
 | `roles.<name>.effort` | | `--effort` |
@@ -501,7 +525,7 @@ The `claude-<name>` launchers run this command with the `--config` path that `in
 6. Otherwise puts its own arguments before yours, and picks the [role](#roles), also the role a [resumed session](#resuming-a-session-with-a-role) ran as, sets its `env` and the role variables, and adds `--add-dir=<dir>` for each `add_dirs` entry of the profile and the role, `--settings` with the [attribution from git config](#attribution-from-git-config), the role's `settings` and your own `--settings` merged into it and the [status line tap](#rate-limits-from-the-status-line) in place of every `statusLine`, the [tmux session name](#session-names-in-tmux), the role's flags, `--system-prompt-snapshot off` when a resume switches the role, and `--model`. It adds the name, the model and the role's single-value flags only when you did not pass the same option yourself.
 7. Prints its notes to stderr, and replaces itself with `claude`.
 
-A config that is missing, cannot be parsed, or fails validation stops the launch. So does a profile that the config no longer defines, a secrets file that is invalid, unreadable or not ignored by git, a start in the home directory, an unknown `--agent-role`, a role whose prompt file `start` cannot read, and a `--settings` file that `start` cannot read. `start` then prints the config path and the error and exits with a non-zero status, without starting Claude. Any other error in `start` also stops the launch, with one line that names the profile, the config path and the error. Fix the config and launch again; a reinstall is only needed for the settings that `install` writes into the profile directory.
+A config that is missing, cannot be parsed, or fails validation stops the launch. So does a profile that the config no longer defines, a secrets file that is invalid, unreadable or not ignored by git, a start in the home directory, an unknown `--agent-role`, a role whose prompt file `start` cannot read, a joined prompt file that `start` cannot write, and a `--settings` file that `start` cannot read. `start` then prints the config path and the error and exits with a non-zero status, without starting Claude. Any other error in `start` also stops the launch, with one line that names the profile, the config path and the error. Fix the config and launch again; a reinstall is only needed for the settings that `install` writes into the profile directory.
 
 `start` reads your arguments with the option table of `claude --help` from Claude Code 2.1.325, the way Claude Code's option parser does, so it tells an option from the value of another one. An option with a value takes the next argument even when that looks like an option: in `--name --model`, `--model` is the session name, and `start` still adds the profile's model. An option with an optional value, such as `--resume` or `--debug`, takes the next argument only when it does not start with `-`. A list option, such as `--add-dir`, takes the arguments up to the next one that starts with `-`. An option that the table does not know, such as a hidden one, is read as taking no value. A newer Claude Code may add options that the table does not know yet.
 
@@ -616,7 +640,8 @@ Not supported. The launchers are bash scripts.
 | `CLAUDE_CONFIG_DIR` | `~/.claude-profiles/personal` | Points Claude Code at the profile's isolated config directory |
 | `FP_CC_AUTH_SWITCH_PROFILE` | `personal` | The active profile name — useful in [status line scripts](https://docs.anthropic.com/en/docs/claude-code/settings#status-bar) and hooks |
 | `FP_CC_AUTH_SWITCH_ROLE` | `dispatcher` | The [role](#roles) of this start. `none` when `--agent-role none`, `default_role: none` or a resumed session's start log asked for no role. Unset when nothing chose a role. |
-| `FP_CC_AUTH_SWITCH_ROLE_PROMPT` | `/home/you/roles/dispatcher.md` | The absolute path of the role's `prompt.file`. Unset when the role has no prompt. |
+| `FP_CC_AUTH_SWITCH_ROLE_PROMPT` | `/home/you/roles/dispatcher.md` | The absolute path of the role's prompt file, or of the file that joins its [several prompt files](#several-prompt-files). Unset when the role has no prompt. |
+| `FP_CC_AUTH_SWITCH_ROLE_PROMPT_FILES` | `["/home/you/roles/dispatcher.md"]` | The role's `prompt.file` or `prompt.files`, as a JSON array of absolute paths. Unset when the role has no prompt. |
 | `FP_CC_AUTH_SWITCH_ROLE_ENV_KEYS` | `DISPATCH_LEVEL=6b86b273ff34fce1,TEAM=…` | Each variable that the role's `env` set, as `NAME=<first 16 hex characters of the SHA-256 of the value>`, comma-separated. The next launch from inside the session drops a listed variable while its value still matches. Unset when the role sets none. |
 | `FP_CC_AUTH_SWITCH_ROLE_PROMPT_MODE` | `append` | `append` or `replace`: the prompt is already in the system prompt. `none`: a hook should inject it. Unset when the role has no prompt. |
 

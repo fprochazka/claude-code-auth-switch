@@ -78,7 +78,9 @@ roles:
   dispatcher:
     description: "Runs worker sessions in sibling tmux windows"
     prompt:
-      file: /home/you/devel/claude-code-plugins/plugins/agent-roles/roles/dispatcher.md   # absolute path
+      files:                           # absolute paths, joined in this order; `file: <path>` takes one
+        - /home/you/devel/claude-code-plugins/plugins/agent-roles/roles/dispatcher.md
+        # - ~/.claude/roles/dispatcher-private.md   # your own additions, kept out of the public file
       mode: append                     # append -> --append-system-prompt-file, replace -> --system-prompt-file, none -> left to a hook
     model: opus                        # --model, replaces the profile's model
     effort: high                       # --effort

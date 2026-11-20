@@ -601,8 +601,9 @@ def build_launch(
             )
         env[ROLE_ENV] = role.name
         if role.prompt is not None:
-            if problem := context.prompt_file_problem(role.prompt.file):
-                raise LaunchError(f"role '{role.name}': cannot read the prompt file {role.prompt.file}: {problem}")
+            prompt_file = role.prompt.files[0]
+            if problem := context.prompt_file_problem(prompt_file):
+                raise LaunchError(f"role '{role.name}': cannot read the prompt file {prompt_file}: {problem}")
             mode = role.prompt.mode
             if mode in PROMPT_FLAGS:
                 flag, user_flags = PROMPT_FLAGS[mode]
@@ -614,8 +615,8 @@ def build_launch(
                     )
                     mode = "none"
                 else:
-                    prompt_args = [flag, role.prompt.file]
-            env[ROLE_PROMPT_ENV] = role.prompt.file
+                    prompt_args = [flag, prompt_file]
+            env[ROLE_PROMPT_ENV] = prompt_file
             env[ROLE_PROMPT_MODE_ENV] = mode
 
     model = role.model if role is not None and role.model else profile.model

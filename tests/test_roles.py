@@ -71,7 +71,7 @@ ROLES = roles(
 def test_every_key_of_the_plan_example_resolves():
     role = ROLES["dispatcher"]
 
-    assert role.prompt == RolePrompt(file="/roles/dispatcher.md", mode="append")
+    assert role.prompt == RolePrompt(files=("/roles/dispatcher.md",), mode="append")
     assert (role.autocompact, role.tools, role.add_dirs, role.strict_mcp_config) == (
         "250000",
         ("Bash", "Read"),
@@ -97,8 +97,16 @@ def test_prompt_mode_defaults_to_append_and_expands_home(monkeypatch):
     monkeypatch.setenv("HOME", "/home/me")
 
     assert roles(worker={"prompt": {"file": "~/roles/worker.md"}})["worker"].prompt == RolePrompt(
-        file="/home/me/roles/worker.md", mode="append"
+        files=("/home/me/roles/worker.md",), mode="append"
     )
+
+
+def test_prompt_files_keep_their_order_and_expand_home(monkeypatch):
+    monkeypatch.setenv("HOME", "/home/me")
+
+    prompt = roles(r={"prompt": {"files": ["/roles/dispatcher.md", "~/roles/sdlc.md"], "mode": "none"}})["r"].prompt
+
+    assert prompt == RolePrompt(files=("/roles/dispatcher.md", "/home/me/roles/sdlc.md"), mode="none")
 
 
 @pytest.mark.parametrize(
@@ -140,7 +148,17 @@ def test_prompt_mode_defaults_to_append_and_expands_home(monkeypatch):
             {"prompt": {"file": "/r.md", "mode": "prepend"}},
             "role 'r': 'prompt.mode' must be one of append, replace, none",
         ),
-        ({"prompt": {"file": "/r.md", "path": "/x"}}, "role 'r': 'prompt' has unknown key 'path'"),
+        (
+            {"prompt": {"file": "/r.md", "path": "/x"}},
+            "role 'r': 'prompt' has unknown key 'path' (known keys: file, files, mode",
+        ),
+        ({"prompt": {"file": "/a.md", "files": ["/b.md"]}}, "role 'r': 'prompt' takes 'file' or 'files', not both"),
+        ({"prompt": {"files": []}}, "role 'r': 'prompt.files' must be a non-empty list"),
+        ({"prompt": {"files": "/a.md"}}, "role 'r': 'prompt.files' must be a non-empty list"),
+        ({"prompt": {"files": ["/a.md", 3]}}, "role 'r': an entry of 'prompt.files' must be the absolute path"),
+        ({"prompt": {"files": ["/a.md", "b.md"]}}, "role 'r': an entry of 'prompt.files' must be an absolute path"),
+        ({"prompt": {"files": ["/a\0.md"]}}, "role 'r': an entry of 'prompt.files' contains a NUL character"),
+        ({"prompt": {"files": ["/a.md", "/a.md"]}}, "role 'r': 'prompt.files' lists /a.md more than once"),
         ({"model": "op\0us"}, "role 'r': 'model' contains a NUL character"),
         ({"extra_args": ["--x\0"]}, "role 'r': an entry of 'extra_args' contains a NUL character"),
         ({"plugin_dirs": ["/p\0"]}, "role 'r': an entry of 'plugin_dirs' contains a NUL character"),
@@ -180,6 +198,13 @@ def test_prompt_mode_defaults_to_append_and_expands_home(monkeypatch):
 def test_invalid_role_names_the_role_and_the_key(role_config, message):
     with pytest.raises(ConfigError, match=message.replace("(", r"\(")):
         roles(r=role_config)
+
+
+def test_prompt_files_that_name_one_file_after_home_expansion_are_a_duplicate(monkeypatch):
+    monkeypatch.setenv("HOME", "/home/me")
+
+    with pytest.raises(ConfigError, match="'prompt.files' lists /home/me/a.md more than once"):
+        roles(r={"prompt": {"files": ["~/a.md", "/home/me/a.md"]}})
 
 
 def test_roles_must_be_a_mapping_and_none_is_reserved():

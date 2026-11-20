@@ -52,8 +52,8 @@ KNOWN_KEYS = frozenset(
 
 @dataclass(frozen=True)
 class RolePrompt:
-    # Absolute path of the prompt file.
-    file: str
+    # Absolute paths of the prompt files, in the order their text reaches the session. `prompt.file` is one of them.
+    files: tuple[str, ...]
     # append: --append-system-prompt-file, replace: --system-prompt-file, none: no flag, a hook injects it.
     mode: str
 
@@ -210,21 +210,37 @@ def resolve_prompt(prompt: object, error: Callable[[str], ConfigError]) -> RoleP
     if prompt is None:
         return None
     if not isinstance(prompt, dict):
-        raise error("'prompt' must be a mapping with 'file' and 'mode'")
-    if unknown := sorted(str(key) for key in prompt if key not in ("file", "mode")):
-        raise error(f"'prompt' has unknown key {', '.join(repr(key) for key in unknown)} (known keys: file, mode)")
-    file = prompt.get("file")
-    if not isinstance(file, str) or not file.strip():
-        raise error("'prompt.file' must be the absolute path of the prompt file")
-    if "\0" in file:
-        raise error("'prompt.file' contains a NUL character")
-    file = expand_path(file)
-    if not os.path.isabs(file):
-        raise error(f"'prompt.file' must be an absolute path, got {file!r}")
+        raise error("'prompt' must be a mapping with 'file' or 'files', and 'mode'")
+    if unknown := sorted(str(key) for key in prompt if key not in ("file", "files", "mode")):
+        raise error(
+            f"'prompt' has unknown key {', '.join(repr(key) for key in unknown)} (known keys: file, files, mode)"
+        )
+    if "file" in prompt and "files" in prompt:
+        raise error("'prompt' takes 'file' or 'files', not both")
+    if "files" in prompt:
+        files = prompt["files"]
+        if not isinstance(files, list) or not files:
+            raise error("'prompt.files' must be a non-empty list of absolute paths of prompt files")
+        files = [prompt_path(item, "an entry of 'prompt.files'", error) for item in files]
+        if duplicates := sorted({file for file in files if files.count(file) > 1}):
+            raise error(f"'prompt.files' lists {', '.join(duplicates)} more than once")
+    else:
+        files = [prompt_path(prompt.get("file"), "'prompt.file'", error)]
     mode = prompt.get("mode", "append")
     if mode not in PROMPT_MODES:
         raise error(f"'prompt.mode' must be one of {', '.join(PROMPT_MODES)}, got {mode!r}")
-    return RolePrompt(file=file, mode=mode)
+    return RolePrompt(files=tuple(files), mode=mode)
+
+
+def prompt_path(value: object, label: str, error: Callable[[str], ConfigError]) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise error(f"{label} must be the absolute path of a prompt file")
+    if "\0" in value:
+        raise error(f"{label} contains a NUL character")
+    path = expand_path(value)
+    if not os.path.isabs(path):
+        raise error(f"{label} must be an absolute path, got {path!r}")
+    return path
 
 
 def resolve_roles(config: dict[str, Any]) -> dict[str, Role]:

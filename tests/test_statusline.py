@@ -72,6 +72,40 @@ def test_an_idle_session_cannot_lower_a_value_or_bring_back_an_older_window():
     assert merged(stored, stale, now_ms=NOW_MS + 1000) is None
 
 
+def test_a_drop_of_30_points_or_more_within_a_window_replaces_the_stored_value():
+    stored = merged(
+        None, payload(five_hour=window(82, HOUR), seven_day=window(82, 86400), spend_limit=window(90, 86400))
+    )
+
+    # A reset bought within a window lowers the usage without moving resets_at.
+    data = merged(
+        stored,
+        payload(SESSION_B, five_hour=window(52, HOUR), seven_day=window(9, 86400 + 20), spend_limit=window(45, 86400)),
+        now_ms=NOW_MS + 1000,
+    )
+
+    assert data is not None
+    assert data["windows"]["five_hour"] == {
+        **window(52, HOUR),
+        "observed_at": NOW_MS + 1000,
+        "changed_at": NOW_MS + 1000,
+        "session_id": SESSION_B,
+    }
+    assert data["windows"]["seven_day"]["used_percentage"] == 9
+    assert data["windows"]["spend_limit"]["used_percentage"] == 45
+
+
+def test_a_drop_of_less_than_30_points_within_a_window_is_ignored():
+    stored = merged(
+        None, payload(five_hour=window(82, HOUR), seven_day=window(82, 86400), spend_limit=window(90, 86400))
+    )
+
+    lagging = payload(
+        SESSION_B, five_hour=window(52.1, HOUR), seven_day=window(53, 86400), spend_limit=window(60.5, 86400)
+    )
+    assert merged(stored, lagging, now_ms=NOW_MS + 1000) is None
+
+
 def test_a_higher_value_and_a_later_window_replace_the_stored_ones():
     stored = merged(None, payload(five_hour=window(90, 600), seven_day=window(30, 86400)))
 

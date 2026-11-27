@@ -24,7 +24,9 @@ The file format is a contract with readers such as cc-blackbox:
 Every session of the profile writes to the same file, and an idle session keeps reporting the values of its own last
 response. Within a window the usage only grows, and the next window resets at least one window length later, so the
 merge keeps the higher value of a window, takes a window that resets later, ignores one that resets earlier, and keeps a
-window that the payload no longer has: Claude Code drops a window once its reset time has passed.
+window that the payload no longer has: Claude Code drops a window once its reset time has passed. A value at least
+BIG_DROP_POINTS lower than the stored one replaces it all the same, because a reset bought within a window, or a raised
+spend limit, lowers the usage without moving the reset time.
 """
 
 from __future__ import annotations
@@ -65,6 +67,9 @@ REFRESH_OBSERVED_MS = 60_000
 # Claude Code's resets_at is in epoch seconds; a value outside 2000-2100 is drifted data.
 RESETS_AT_RANGE = (946_684_800, 4_102_444_800)
 OUR_WINDOW_KEYS = ("observed_at", "changed_at", "session_id")
+# A value of the same window at least this many percentage points below the stored one replaces it. An idle session
+# usually lags by less, and a reset bought within a window does not move resets_at, so it shows only as such a drop.
+BIG_DROP_POINTS = 30.0
 
 
 def warn(message: str) -> None:
@@ -140,7 +145,7 @@ def merge(stored: object, payload: object, *, now_ms: int, profile: str | None) 
         if relation == "same" and current is not None and current_values is not None:
             used_new, used_old = number(new["used_percentage"]), number(current_values["used_percentage"])
             assert used_new is not None and used_old is not None  # valid_window checked both
-            if used_new < used_old:
+            if used_old - BIG_DROP_POINTS < used_new < used_old:
                 # An idle session reporting the value of its last response.
                 continue
             if new == current_values:

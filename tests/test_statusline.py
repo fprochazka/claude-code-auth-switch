@@ -55,6 +55,12 @@ def test_the_first_payload_writes_every_window_with_its_observation():
                 "session_id": SESSION_A,
             },
         },
+        "sessions": {
+            SESSION_A: {
+                "five_hour": {**window(23.5, HOUR), "observed_at": NOW_MS},
+                "seven_day": {**window(41, 3 * 86400), "observed_at": NOW_MS},
+            },
+        },
     }
 
 
@@ -64,46 +70,105 @@ def test_a_payload_without_rate_limits_writes_nothing():
     assert merged(None, ["not", "an", "object"]) is None
 
 
+def windows_after(stored, data):
+    return (data if data is not None else stored)["windows"]
+
+
 def test_an_idle_session_cannot_lower_a_value_or_bring_back_an_older_window():
     stored = merged(None, payload(five_hour=window(60, HOUR), seven_day=window(30, 86400)))
 
     # An idle session still reports its last response: a lower value of the same window, and the week before.
     stale = payload(SESSION_B, five_hour=window(40, HOUR + 20), seven_day=window(90, 86400 - 7 * 86400))
-    assert merged(stored, stale, now_ms=NOW_MS + 1000) is None
+    assert windows_after(stored, merged(stored, stale, now_ms=NOW_MS + 1000)) == stored["windows"]
 
 
-def test_a_drop_of_30_points_or_more_within_a_window_replaces_the_stored_value():
-    stored = merged(
-        None, payload(five_hour=window(82, HOUR), seven_day=window(82, 86400), spend_limit=window(90, 86400))
-    )
+def test_an_idle_session_repeating_an_old_low_value_cannot_replace_a_value_30_points_higher():
+    stored = merged(None, payload(five_hour=window(10, HOUR)))
+    stored = merged(stored, payload(SESSION_B, five_hour=window(45, HOUR)), now_ms=NOW_MS + 1000)
+
+    assert merged(stored, payload(five_hour=window(10, HOUR)), now_ms=NOW_MS + 2000) is None
+
+
+def three_windows(five_hour, seven_day, spend_limit):
+    return {
+        "five_hour": window(five_hour, HOUR),
+        "seven_day": window(seven_day, 86400),
+        "spend_limit": window(spend_limit, 86400),
+    }
+
+
+def three_windows_used(used):
+    return {"five_hour": used, "seven_day": used, "spend_limit": used}
+
+
+def test_a_drop_of_30_points_or_more_replaces_the_stored_value_when_the_sessions_own_value_changed():
+    stored = merged(None, payload(**three_windows(82, 82, 90)))
 
     # A reset bought within a window lowers the usage without moving resets_at.
-    data = merged(
-        stored,
-        payload(SESSION_B, five_hour=window(52, HOUR), seven_day=window(9, 86400 + 20), spend_limit=window(45, 86400)),
-        now_ms=NOW_MS + 1000,
-    )
+    fresh = payload(five_hour=window(52, HOUR), seven_day=window(9, 86400 + 20), spend_limit=window(45, 86400))
+    data = merged(stored, fresh, now_ms=NOW_MS + 1000)
 
     assert data is not None
     assert data["windows"]["five_hour"] == {
         **window(52, HOUR),
         "observed_at": NOW_MS + 1000,
         "changed_at": NOW_MS + 1000,
-        "session_id": SESSION_B,
+        "session_id": SESSION_A,
     }
     assert data["windows"]["seven_day"]["used_percentage"] == 9
     assert data["windows"]["spend_limit"]["used_percentage"] == 45
 
 
-def test_a_drop_of_less_than_30_points_within_a_window_is_ignored():
-    stored = merged(
-        None, payload(five_hour=window(82, HOUR), seven_day=window(82, 86400), spend_limit=window(90, 86400))
-    )
+def test_a_drop_of_less_than_30_points_is_ignored_even_when_the_sessions_own_value_changed():
+    stored = merged(None, payload(**three_windows(82, 82, 90)))
 
-    lagging = payload(
-        SESSION_B, five_hour=window(52.1, HOUR), seven_day=window(53, 86400), spend_limit=window(60.5, 86400)
-    )
-    assert merged(stored, lagging, now_ms=NOW_MS + 1000) is None
+    data = merged(stored, payload(**three_windows(52.1, 53, 60.5)), now_ms=NOW_MS + 1000)
+
+    assert windows_after(stored, data) == stored["windows"]
+    assert data is not None and data["sessions"][SESSION_A]["five_hour"]["used_percentage"] == 52.1
+
+
+def test_a_session_new_in_the_window_is_only_recorded_and_replaces_the_value_with_its_next_changed_one():
+    stored = merged(None, payload(**three_windows(82, 82, 90)))
+
+    first = merged(stored, payload(SESSION_B, **three_windows(9, 9, 9)), now_ms=NOW_MS + 1000)
+    assert first is not None
+    assert first["windows"] == stored["windows"]
+    assert first["sessions"][SESSION_B]["five_hour"] == {**window(9, HOUR), "observed_at": NOW_MS + 1000}
+
+    assert merged(first, payload(SESSION_B, **three_windows(9, 9, 9)), now_ms=NOW_MS + 2000) is None
+    second = merged(first, payload(SESSION_B, **three_windows(9.5, 9.5, 9.5)), now_ms=NOW_MS + 3000)
+    assert second is not None
+    assert {name: w["used_percentage"] for name, w in second["windows"].items()} == three_windows_used(9.5)
+    assert second["windows"]["five_hour"]["session_id"] == SESSION_B
+
+
+def test_a_sessions_record_expires_when_its_window_reset_or_after_6_hours_without_a_record():
+    stored = merged(None, payload(five_hour=window(10, 600), seven_day=window(10, 3 * 86400)))
+
+    after_reset = merged(stored, payload(SESSION_B, seven_day=window(11, 3 * 86400)), now_ms=NOW_MS + 601_000)
+    assert after_reset is not None
+    assert sorted(after_reset["sessions"][SESSION_A]) == ["seven_day"]
+
+    six_hours_later = NOW_MS + 6 * HOUR * 1000
+    unseen = merged(stored, payload(SESSION_B, seven_day=window(11, 3 * 86400)), now_ms=six_hours_later)
+    assert unseen is not None
+    assert sorted(unseen["sessions"]) == [SESSION_B]
+
+
+def test_only_the_100_sessions_with_the_newest_records_are_kept():
+    stored = merged(None, payload(five_hour=window(10, HOUR)))
+    stored["sessions"] = {
+        f"session-{i:03}": {"five_hour": {**window(10, HOUR), "observed_at": NOW_MS - i}} for i in range(100)
+    }
+
+    data = merged(stored, payload(SESSION_B, five_hour=window(10, HOUR)), now_ms=NOW_MS + 1000)
+
+    assert data is not None
+    assert len(data["sessions"]) == 100
+    assert SESSION_B in data["sessions"]
+    assert "session-099" not in data["sessions"]
+    assert "session-098" in data["sessions"]
 
 
 def test_a_higher_value_and_a_later_window_replace_the_stored_ones():
@@ -139,11 +204,12 @@ def test_a_window_the_payload_dropped_is_kept():
 def test_unchanged_values_are_written_again_only_after_a_minute():
     stored = merged(None, payload(five_hour=window(10, HOUR)))
 
-    assert merged(stored, payload(SESSION_B, five_hour=window(10, HOUR)), now_ms=NOW_MS + 59_000) is None
-    refreshed = merged(stored, payload(SESSION_B, five_hour=window(10, HOUR)), now_ms=NOW_MS + 60_000)
+    assert merged(stored, payload(five_hour=window(10, HOUR)), now_ms=NOW_MS + 59_000) is None
+    refreshed = merged(stored, payload(five_hour=window(10, HOUR)), now_ms=NOW_MS + 60_000)
     assert refreshed is not None
     assert refreshed["windows"]["five_hour"]["observed_at"] == NOW_MS + 60_000
     assert refreshed["windows"]["five_hour"]["changed_at"] == NOW_MS
+    assert refreshed["sessions"][SESSION_A]["five_hour"]["observed_at"] == NOW_MS + 60_000
 
 
 def test_spend_limit_and_unknown_windows_are_kept_as_given():
@@ -162,7 +228,7 @@ def test_a_spend_limit_reset_time_that_moved_by_seconds_is_the_same_period():
     jittered = merged(stored, payload(SESSION_B, spend_limit=window(30, 86400 + 2)), now_ms=NOW_MS + 1000)
     later = merged(stored, payload(SESSION_B, spend_limit=window(1, 86400 + 30 * 86400)), now_ms=NOW_MS + 1000)
 
-    assert jittered is None
+    assert windows_after(stored, jittered) == stored["windows"]
     assert later is not None and later["windows"]["spend_limit"]["used_percentage"] == 1
 
 

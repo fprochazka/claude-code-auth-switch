@@ -19,14 +19,19 @@ The file format is a contract with readers such as cc-blackbox:
 
     {"v": 1, "profile": ..., "written_at": <epoch ms>, "session_id": ..., "model": ..., "claude_version": ...,
      "windows": {"<name>": {"used_percentage": ..., "resets_at": <epoch s>, ..., "observed_at": <epoch ms>,
-                            "changed_at": <epoch ms>, "session_id": ...}}}
+                            "changed_at": <epoch ms>, "session_id": ...}},
+     "sessions": {"<session id>": {"<name>": {"used_percentage": ..., "resets_at": <epoch s>, "observed_at": <epoch ms>}}}}
+
+Readers must ignore keys they do not know, so that a key can be added without a new "v".
 
 Every session of the profile writes to the same file, and an idle session keeps reporting the values of its own last
 response. Within a window the usage only grows, and the next window resets at least one window length later, so the
 merge keeps the higher value of a window, takes a window that resets later, ignores one that resets earlier, and keeps a
 window that the payload no longer has: Claude Code drops a window once its reset time has passed. A value at least
 BIG_DROP_POINTS lower than the stored one replaces it all the same, because a reset bought within a window, or a raised
-spend limit, lowers the usage without moving the reset time.
+spend limit, lowers the usage without moving the reset time. It does so only when the reporting session's own value of
+that window changed since its last recorded one, which `sessions` keeps: an idle session repeats its last value
+exactly, so a changed one comes from a fresh response.
 """
 
 from __future__ import annotations
@@ -67,9 +72,14 @@ REFRESH_OBSERVED_MS = 60_000
 # Claude Code's resets_at is in epoch seconds; a value outside 2000-2100 is drifted data.
 RESETS_AT_RANGE = (946_684_800, 4_102_444_800)
 OUR_WINDOW_KEYS = ("observed_at", "changed_at", "session_id")
-# A value of the same window at least this many percentage points below the stored one replaces it. An idle session
-# usually lags by less, and a reset bought within a window does not move resets_at, so it shows only as such a drop.
+# A value of the same window at least this many percentage points below the stored one replaces it, when the session's
+# own value changed since its last recorded one. A reset bought within a window does not move resets_at, so it shows
+# only as such a drop.
 BIG_DROP_POINTS = 30.0
+# A session's recorded value of a window is forgotten once the window has reset or after this long without a recorded
+# change, and only the sessions with the newest records are kept, so the file stays small with dozens of sessions.
+SESSION_READING_TTL_MS = 6 * 3600 * 1000
+MAX_SESSIONS = 100
 
 
 def warn(message: str) -> None:
@@ -122,6 +132,42 @@ def compare(name: str, new: dict[str, Any], stored: dict[str, Any]) -> str:
     return "same"
 
 
+def session_readings(stored: object, now_ms: int) -> dict[str, dict[str, dict[str, Any]]]:
+    """The valid per-session values of `stored`, without those that expired."""
+    readings: dict[str, dict[str, dict[str, Any]]] = {}
+    if not isinstance(stored, dict):
+        return readings
+    for session_id, windows in stored.items():
+        if not isinstance(session_id, str) or not session_id or not isinstance(windows, dict):
+            continue
+        kept: dict[str, dict[str, Any]] = {}
+        for name, reading in windows.items():
+            if not isinstance(name, str) or not isinstance(reading, dict):
+                continue
+            used, observed = number(reading.get("used_percentage")), number(reading.get("observed_at"))
+            resets_at = number(reading.get("resets_at"))
+            if used is None or observed is None or now_ms - observed >= SESSION_READING_TTL_MS:
+                continue
+            if resets_at is not None and resets_at * 1000 <= now_ms:
+                continue
+            kept[name] = reading
+        if kept:
+            readings[session_id] = kept
+    return readings
+
+
+def newest_sessions(readings: dict[str, dict[str, dict[str, Any]]]) -> dict[str, dict[str, dict[str, Any]]]:
+    """At most MAX_SESSIONS sessions, those whose newest record is the most recent."""
+    if len(readings) <= MAX_SESSIONS:
+        return readings
+
+    def newest(session_id: str) -> float:
+        return max(number(reading.get("observed_at")) or 0.0 for reading in readings[session_id].values())
+
+    kept = set(sorted(readings, key=newest, reverse=True)[:MAX_SESSIONS])
+    return {session_id: readings[session_id] for session_id in readings if session_id in kept}
+
+
 def merge(stored: object, payload: object, *, now_ms: int, profile: str | None) -> dict[str, Any] | None:
     """The new file content, or None when the file needs no write."""
     new_windows = payload_windows(payload)
@@ -134,18 +180,37 @@ def merge(stored: object, payload: object, *, now_ms: int, profile: str | None) 
     session_id = session_id if isinstance(session_id, str) and session_id else None
 
     windows: dict[str, Any] = {name: window for name, window in old_windows.items() if isinstance(window, dict)}
+    readings = session_readings(old.get("sessions"), now_ms)
+    own_readings = readings.get(session_id, {}) if session_id is not None else {}
+    unchanged_own: list[str] = []
     changed = False
     stale_observation = False
+    recorded = False
     for name, new in new_windows.items():
         current = windows.get(name)
         current_values = valid_window(name, current) if current is not None else None
         relation = "newer" if current_values is None else compare(name, new, current_values)
         if relation == "older":
             continue
+        used_new = number(new["used_percentage"])
+        assert used_new is not None  # valid_window checked it
+        own = own_readings.get(name)
+        own_known = own is not None and compare(name, new, own) == "same"
+        fresh = own_known and own is not None and number(own.get("used_percentage")) != used_new
+        if session_id is not None:
+            if own_known and not fresh:
+                unchanged_own.append(name)
+            else:
+                # A session seen for the first time in this window is only recorded: its value may be an old one.
+                recorded = True
+                reading = {"used_percentage": new["used_percentage"], "observed_at": now_ms}
+                if "resets_at" in new:
+                    reading["resets_at"] = new["resets_at"]
+                readings.setdefault(session_id, {})[name] = reading
         if relation == "same" and current is not None and current_values is not None:
-            used_new, used_old = number(new["used_percentage"]), number(current_values["used_percentage"])
-            assert used_new is not None and used_old is not None  # valid_window checked both
-            if used_old - BIG_DROP_POINTS < used_new < used_old:
+            used_old = number(current_values["used_percentage"])
+            assert used_old is not None  # valid_window checked it
+            if used_new < used_old and (used_new > used_old - BIG_DROP_POINTS or not fresh):
                 # An idle session reporting the value of its last response.
                 continue
             if new == current_values:
@@ -157,8 +222,13 @@ def merge(stored: object, payload: object, *, now_ms: int, profile: str | None) 
         changed = True
         windows[name] = {**new, "observed_at": now_ms, "changed_at": now_ms, "session_id": session_id}
 
-    if not changed and not stale_observation:
+    if not changed and not stale_observation and not recorded:
         return None
+    # The file is written anyway, so the session's unchanged records are refreshed for free. A repeat alone never writes:
+    # an idle session's record expires after SESSION_READING_TTL_MS and is recorded again on its next status line run.
+    if session_id is not None:
+        for name in unchanged_own:
+            readings[session_id][name] = {**readings[session_id][name], "observed_at": now_ms}
     model = payload.get("model") if isinstance(payload, dict) else None
     model_id = model.get("id") if isinstance(model, dict) else None
     version = payload.get("version") if isinstance(payload, dict) else None
@@ -170,6 +240,7 @@ def merge(stored: object, payload: object, *, now_ms: int, profile: str | None) 
         "model": model_id if isinstance(model_id, str) else None,
         "claude_version": version if isinstance(version, str) else None,
         "windows": windows,
+        "sessions": newest_sessions(readings),
     }
 
 
